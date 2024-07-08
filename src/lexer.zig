@@ -1,51 +1,8 @@
 const std = @import("std");
 const assert = @import("./assert.zig").assert;
-
-pub const TokenType = enum {
-    // Literals
-    NUMBER,
-
-    // Operators
-    PLUS,
-    ASSIGN,
-    MINUS,
-    BANG,
-    ASTERISK,
-    SLASH,
-
-    // Comparison
-    LT,
-    GT,
-    EQ,
-    NOT_EQ,
-
-    // Delimiters
-    COMMA,
-    COLON,
-
-    // Brackets
-    LPAREN,
-    RPAREN,
-    LBRACE,
-    RBRACE,
-
-    // Reserved keywords/identifiers
-    DEF,
-    IF,
-    ELSE,
-    RETURN,
-    TRUE,
-    FALSE,
-    IDENT, // user-defined
-
-    // Indentation
-    INDENT,
-    DEDENT,
-
-    // illegal
-    EOF,
-    ILLEGAL,
-};
+const _tok = @import("./token.zig");
+const TokenType = _tok.TokenType;
+const Token = _tok.Token;
 
 fn isLetter(ch: u8) bool {
     return std.ascii.isAlphabetic(ch) or ch == '_';
@@ -77,22 +34,8 @@ fn lookupIdent(ident: []const u8) TokenType {
         return .FALSE;
     }
 
-    return .IDENT;
+    return .NAME;
 }
-
-pub const Token = struct {
-    // ADD LATER
-    // filename: []const u8,
-    line: usize,
-    column: usize,
-    type: TokenType,
-    literal: []const u8,
-
-    // Override default formatting, see std.fmt.format for signature
-    pub fn format(self: Token, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("lexer.Token {{ .literal = \"{s}\", .type = \"{s}\", .line = {}, .column = {} }}", .{ self.literal, @tagName(self.type), self.line, self.column });
-    }
-};
 
 pub const Lexer = struct {
     // Whole input string
@@ -124,7 +67,7 @@ pub const Lexer = struct {
         return lex;
     }
 
-    pub fn deinit(self: *Lexer) void {
+    pub fn deinit(self: *const Lexer) void {
         self.indentStack.deinit();
         self.tokensStack.deinit();
     }
@@ -257,28 +200,28 @@ pub const Lexer = struct {
                 if (self.peekChar() == '=') {
                     self.readChar();
                     // extend the slice to include next char
-                    break :bang .{ .type = .NOT_EQ, .literal = self.input[self.position - 1 .. self.readPosition] };
+                    break :bang .{ .type = .NOTEQUAL, .literal = self.input[self.position - 1 .. self.readPosition] };
                 }
 
-                break :bang .{ .type = .BANG, .literal = chSlice };
+                break :bang .{ .type = .EXCLAMATION, .literal = chSlice };
             },
-            '*' => .{ .type = .ASTERISK, .literal = chSlice },
+            '*' => .{ .type = .STAR, .literal = chSlice },
             '/' => .{ .type = .SLASH, .literal = chSlice },
-            '<' => .{ .type = .LT, .literal = chSlice },
-            '>' => .{ .type = .GT, .literal = chSlice },
+            '<' => .{ .type = .LESS, .literal = chSlice },
+            '>' => .{ .type = .GREATER, .literal = chSlice },
             '=' => eq: {
                 if (self.peekChar() == '=') {
                     self.readChar();
                     // extend the slice to include next char
-                    break :eq .{ .type = .EQ, .literal = self.input[self.position - 1 .. self.readPosition] };
+                    break :eq .{ .type = .EQEQUAL, .literal = self.input[self.position - 1 .. self.readPosition] };
                 }
 
-                break :eq .{ .type = .ASSIGN, .literal = chSlice };
+                break :eq .{ .type = .EQUAL, .literal = chSlice };
             },
             ',' => .{ .type = .COMMA, .literal = chSlice },
             ':' => .{ .type = .COLON, .literal = chSlice },
-            '(' => .{ .type = .LPAREN, .literal = chSlice },
-            ')' => .{ .type = .RPAREN, .literal = chSlice },
+            '(' => .{ .type = .LPAR, .literal = chSlice },
+            ')' => .{ .type = .RPAR, .literal = chSlice },
             '{' => .{ .type = .LBRACE, .literal = chSlice },
             '}' => .{ .type = .RBRACE, .literal = chSlice },
             0 => {
@@ -365,29 +308,29 @@ test "next token no indent" {
     ;
 
     try checkLexerOutput(input, snap(@src(),
-        \\lexer.Token { .literal = "five", .type = "IDENT", .line = 1, .column = 1 }
-        \\lexer.Token { .literal = "=", .type = "ASSIGN", .line = 1, .column = 6 }
+        \\lexer.Token { .literal = "five", .type = "NAME", .line = 1, .column = 1 }
+        \\lexer.Token { .literal = "=", .type = "EQUAL", .line = 1, .column = 6 }
         \\lexer.Token { .literal = "5", .type = "NUMBER", .line = 1, .column = 8 }
-        \\lexer.Token { .literal = "ten", .type = "IDENT", .line = 2, .column = 1 }
-        \\lexer.Token { .literal = "=", .type = "ASSIGN", .line = 2, .column = 5 }
+        \\lexer.Token { .literal = "ten", .type = "NAME", .line = 2, .column = 1 }
+        \\lexer.Token { .literal = "=", .type = "EQUAL", .line = 2, .column = 5 }
         \\lexer.Token { .literal = "10", .type = "NUMBER", .line = 2, .column = 7 }
-        \\lexer.Token { .literal = "result", .type = "IDENT", .line = 3, .column = 1 }
-        \\lexer.Token { .literal = "=", .type = "ASSIGN", .line = 3, .column = 8 }
-        \\lexer.Token { .literal = "add", .type = "IDENT", .line = 3, .column = 10 }
-        \\lexer.Token { .literal = "(", .type = "LPAREN", .line = 3, .column = 13 }
-        \\lexer.Token { .literal = "five", .type = "IDENT", .line = 3, .column = 14 }
+        \\lexer.Token { .literal = "result", .type = "NAME", .line = 3, .column = 1 }
+        \\lexer.Token { .literal = "=", .type = "EQUAL", .line = 3, .column = 8 }
+        \\lexer.Token { .literal = "add", .type = "NAME", .line = 3, .column = 10 }
+        \\lexer.Token { .literal = "(", .type = "LPAR", .line = 3, .column = 13 }
+        \\lexer.Token { .literal = "five", .type = "NAME", .line = 3, .column = 14 }
         \\lexer.Token { .literal = ",", .type = "COMMA", .line = 3, .column = 18 }
-        \\lexer.Token { .literal = "ten", .type = "IDENT", .line = 3, .column = 20 }
-        \\lexer.Token { .literal = ")", .type = "RPAREN", .line = 3, .column = 23 }
-        \\lexer.Token { .literal = "!", .type = "BANG", .line = 4, .column = 1 }
+        \\lexer.Token { .literal = "ten", .type = "NAME", .line = 3, .column = 20 }
+        \\lexer.Token { .literal = ")", .type = "RPAR", .line = 3, .column = 23 }
+        \\lexer.Token { .literal = "!", .type = "EXCLAMATION", .line = 4, .column = 1 }
         \\lexer.Token { .literal = "-", .type = "MINUS", .line = 4, .column = 2 }
         \\lexer.Token { .literal = "/", .type = "SLASH", .line = 4, .column = 3 }
-        \\lexer.Token { .literal = "*", .type = "ASTERISK", .line = 4, .column = 4 }
+        \\lexer.Token { .literal = "*", .type = "STAR", .line = 4, .column = 4 }
         \\lexer.Token { .literal = "5", .type = "NUMBER", .line = 4, .column = 5 }
         \\lexer.Token { .literal = "5", .type = "NUMBER", .line = 5, .column = 1 }
-        \\lexer.Token { .literal = "<", .type = "LT", .line = 5, .column = 3 }
+        \\lexer.Token { .literal = "<", .type = "LESS", .line = 5, .column = 3 }
         \\lexer.Token { .literal = "10", .type = "NUMBER", .line = 5, .column = 5 }
-        \\lexer.Token { .literal = ">", .type = "GT", .line = 5, .column = 8 }
+        \\lexer.Token { .literal = ">", .type = "GREATER", .line = 5, .column = 8 }
         \\lexer.Token { .literal = "5", .type = "NUMBER", .line = 5, .column = 10 }
         \\lexer.Token { .literal = "", .type = "EOF", .line = 5, .column = 11 }
         \\
@@ -407,22 +350,22 @@ test "with indents" {
 
     try checkLexerOutput(input, snap(@src(),
         \\lexer.Token { .literal = "def", .type = "DEF", .line = 1, .column = 1 }
-        \\lexer.Token { .literal = "add", .type = "IDENT", .line = 1, .column = 5 }
-        \\lexer.Token { .literal = "(", .type = "LPAREN", .line = 1, .column = 8 }
-        \\lexer.Token { .literal = "x", .type = "IDENT", .line = 1, .column = 9 }
+        \\lexer.Token { .literal = "add", .type = "NAME", .line = 1, .column = 5 }
+        \\lexer.Token { .literal = "(", .type = "LPAR", .line = 1, .column = 8 }
+        \\lexer.Token { .literal = "x", .type = "NAME", .line = 1, .column = 9 }
         \\lexer.Token { .literal = ",", .type = "COMMA", .line = 1, .column = 10 }
-        \\lexer.Token { .literal = "y", .type = "IDENT", .line = 1, .column = 12 }
-        \\lexer.Token { .literal = ")", .type = "RPAREN", .line = 1, .column = 13 }
+        \\lexer.Token { .literal = "y", .type = "NAME", .line = 1, .column = 12 }
+        \\lexer.Token { .literal = ")", .type = "RPAR", .line = 1, .column = 13 }
         \\lexer.Token { .literal = ":", .type = "COLON", .line = 1, .column = 14 }
         \\lexer.Token { .literal = "  ", .type = "INDENT", .line = 2, .column = 3 }
         \\lexer.Token { .literal = "return", .type = "RETURN", .line = 2, .column = 3 }
-        \\lexer.Token { .literal = "x", .type = "IDENT", .line = 2, .column = 10 }
+        \\lexer.Token { .literal = "x", .type = "NAME", .line = 2, .column = 10 }
         \\lexer.Token { .literal = "+", .type = "PLUS", .line = 2, .column = 12 }
-        \\lexer.Token { .literal = "y", .type = "IDENT", .line = 2, .column = 14 }
+        \\lexer.Token { .literal = "y", .type = "NAME", .line = 2, .column = 14 }
         \\lexer.Token { .literal = "", .type = "DEDENT", .line = 4, .column = 1 }
         \\lexer.Token { .literal = "if", .type = "IF", .line = 4, .column = 1 }
         \\lexer.Token { .literal = "5", .type = "NUMBER", .line = 4, .column = 4 }
-        \\lexer.Token { .literal = "<", .type = "LT", .line = 4, .column = 6 }
+        \\lexer.Token { .literal = "<", .type = "LESS", .line = 4, .column = 6 }
         \\lexer.Token { .literal = "10", .type = "NUMBER", .line = 4, .column = 8 }
         \\lexer.Token { .literal = ":", .type = "COLON", .line = 4, .column = 10 }
         \\lexer.Token { .literal = "   ", .type = "INDENT", .line = 5, .column = 4 }
@@ -448,10 +391,10 @@ test "with two char tokens" {
 
     try checkLexerOutput(input, snap(@src(),
         \\lexer.Token { .literal = "10", .type = "NUMBER", .line = 1, .column = 1 }
-        \\lexer.Token { .literal = "==", .type = "EQ", .line = 1, .column = 4 }
+        \\lexer.Token { .literal = "==", .type = "EQEQUAL", .line = 1, .column = 4 }
         \\lexer.Token { .literal = "10", .type = "NUMBER", .line = 1, .column = 7 }
         \\lexer.Token { .literal = "10", .type = "NUMBER", .line = 2, .column = 1 }
-        \\lexer.Token { .literal = "!=", .type = "NOT_EQ", .line = 2, .column = 4 }
+        \\lexer.Token { .literal = "!=", .type = "NOTEQUAL", .line = 2, .column = 4 }
         \\lexer.Token { .literal = "9", .type = "NUMBER", .line = 2, .column = 7 }
         \\lexer.Token { .literal = "", .type = "EOF", .line = 2, .column = 8 }
         \\

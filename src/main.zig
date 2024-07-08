@@ -1,8 +1,9 @@
 const std = @import("std");
 const l = @import("./lexer.zig");
 const Lexer = l.Lexer;
-const Token = l.Token;
-const TokenType = l.TokenType;
+const t = @import("./token.zig");
+const Token = t.Token;
+const TokenType = t.TokenType;
 
 pub fn main() !void {
     const alloc = std.heap.page_allocator;
