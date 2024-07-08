@@ -1,24 +1,26 @@
 const std = @import("std");
+const l = @import("./lexer.zig");
+const Lexer = l.Lexer;
+const Token = l.Token;
+const TokenType = l.TokenType;
 
 pub fn main() !void {
-    // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
+    const alloc = std.heap.page_allocator;
+    const reader = std.io.getStdIn().reader();
 
-    // stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    const stdout = bw.writer();
+    while (true) {
+        std.debug.print(">> ", .{});
+        const scanned = try reader.readUntilDelimiterAlloc(alloc, '\n', 1024);
+        defer alloc.free(scanned);
 
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
+        var lexer = try Lexer.init(alloc, scanned);
+        defer lexer.deinit();
 
-    try bw.flush(); // don't forget to flush!
-}
-
-test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit(); // try commenting this out and see if zig detects the memory leak!
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
+        while (try lexer.nextToken()) |tok| {
+            if (tok.type == .EOF) {
+                break;
+            }
+            std.debug.print("{any}\n", .{tok});
+        }
+    }
 }

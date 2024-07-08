@@ -1,7 +1,7 @@
 const std = @import("std");
 const assert = @import("./assert.zig").assert;
 
-const TokenType = enum {
+pub const TokenType = enum {
     // Literals
     NUMBER,
 
@@ -80,7 +80,7 @@ fn lookupIdent(ident: []const u8) TokenType {
     return .IDENT;
 }
 
-const Token = struct {
+pub const Token = struct {
     // ADD LATER
     // filename: []const u8,
     line: usize,
@@ -94,7 +94,7 @@ const Token = struct {
     }
 };
 
-const Lexer = struct {
+pub const Lexer = struct {
     // Whole input string
     input: []const u8,
     // Current position in input - points to current char
@@ -116,7 +116,7 @@ const Lexer = struct {
     // Whether the lexer cannot proceed further
     errored: bool = false,
 
-    fn init(alloc: std.mem.Allocator, input: []const u8) !Lexer {
+    pub fn init(alloc: std.mem.Allocator, input: []const u8) !Lexer {
         var lex: Lexer = .{ .input = input, .indentStack = std.ArrayList(usize).init(alloc), .tokensStack = std.ArrayList(Token).init(alloc) };
         // start with indent 0
         try lex.indentStack.insert(0, 0);
@@ -124,7 +124,7 @@ const Lexer = struct {
         return lex;
     }
 
-    fn deinit(self: *Lexer) void {
+    pub fn deinit(self: *Lexer) void {
         self.indentStack.deinit();
         self.tokensStack.deinit();
     }
@@ -222,7 +222,7 @@ const Lexer = struct {
         return self.input[self.readPosition];
     }
 
-    fn nextToken(self: *Lexer) !?Token {
+    pub fn nextToken(self: *Lexer) !?Token {
         if (self.errored) {
             return null;
         }
@@ -309,7 +309,6 @@ const Lexer = struct {
                 return .{ .type = .ILLEGAL, .literal = chSlice, .column = col, .line = row };
             },
         };
-        std.debug.print("{any} {s}\n", .{ tokenData.type, tokenData.literal });
 
         self.readChar(); // read next one
         return .{ .type = tokenData.type, .literal = tokenData.literal, .column = col, .line = row };
