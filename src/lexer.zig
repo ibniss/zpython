@@ -13,8 +13,11 @@ const TokenType = enum {
     ASTERISK,
     SLASH,
 
+    // Comparison
     LT,
     GT,
+    EQ,
+    NOT_EQ,
 
     // Delimiters
     COMMA,
@@ -30,6 +33,9 @@ const TokenType = enum {
     DEF,
     IF,
     ELSE,
+    RETURN,
+    TRUE,
+    FALSE,
     IDENT, // user-defined
 
     // Indentation
@@ -57,6 +63,18 @@ fn lookupIdent(ident: []const u8) TokenType {
 
     if (std.mem.eql(u8, ident, "else")) {
         return .ELSE;
+    }
+
+    if (std.mem.eql(u8, ident, "return")) {
+        return .RETURN;
+    }
+
+    if (std.mem.eql(u8, ident, "True")) {
+        return .TRUE;
+    }
+
+    if (std.mem.eql(u8, ident, "False")) {
+        return .FALSE;
     }
 
     return .IDENT;
@@ -196,6 +214,14 @@ const Lexer = struct {
         return self.input[pos..self.position];
     }
 
+    fn peekChar(self: *Lexer) u8 {
+        if (self.readPosition >= self.input.len) {
+            return 0;
+        }
+
+        return self.input[self.readPosition];
+    }
+
     fn nextToken(self: *Lexer) !?Token {
         if (self.errored) {
             return null;
@@ -227,12 +253,28 @@ const Lexer = struct {
         const tokenData: struct { type: TokenType, literal: []const u8 } = switch (self.ch) {
             '+' => .{ .type = .PLUS, .literal = chSlice },
             '-' => .{ .type = .MINUS, .literal = chSlice },
-            '!' => .{ .type = .BANG, .literal = chSlice },
+            '!' => bang: {
+                if (self.peekChar() == '=') {
+                    self.readChar();
+                    // extend the slice to include next char
+                    break :bang .{ .type = .NOT_EQ, .literal = self.input[self.position - 1 .. self.readPosition] };
+                }
+
+                break :bang .{ .type = .BANG, .literal = chSlice };
+            },
             '*' => .{ .type = .ASTERISK, .literal = chSlice },
             '/' => .{ .type = .SLASH, .literal = chSlice },
             '<' => .{ .type = .LT, .literal = chSlice },
             '>' => .{ .type = .GT, .literal = chSlice },
-            '=' => .{ .type = .ASSIGN, .literal = chSlice },
+            '=' => eq: {
+                if (self.peekChar() == '=') {
+                    self.readChar();
+                    // extend the slice to include next char
+                    break :eq .{ .type = .EQ, .literal = self.input[self.position - 1 .. self.readPosition] };
+                }
+
+                break :eq .{ .type = .ASSIGN, .literal = chSlice };
+            },
             ',' => .{ .type = .COMMA, .literal = chSlice },
             ':' => .{ .type = .COLON, .literal = chSlice },
             '(' => .{ .type = .LPAREN, .literal = chSlice },
@@ -359,9 +401,9 @@ test "with indents" {
         \\  return x + y
         \\
         \\if 5 < 10:
-        \\   return true
+        \\   return True
         \\else:
-        \\   return false
+        \\   return False
     ;
 
     try checkLexerOutput(input, snap(@src(),
@@ -374,7 +416,7 @@ test "with indents" {
         \\lexer.Token { .literal = ")", .type = "RPAREN", .line = 1, .column = 13 }
         \\lexer.Token { .literal = ":", .type = "COLON", .line = 1, .column = 14 }
         \\lexer.Token { .literal = "  ", .type = "INDENT", .line = 2, .column = 3 }
-        \\lexer.Token { .literal = "return", .type = "IDENT", .line = 2, .column = 3 }
+        \\lexer.Token { .literal = "return", .type = "RETURN", .line = 2, .column = 3 }
         \\lexer.Token { .literal = "x", .type = "IDENT", .line = 2, .column = 10 }
         \\lexer.Token { .literal = "+", .type = "PLUS", .line = 2, .column = 12 }
         \\lexer.Token { .literal = "y", .type = "IDENT", .line = 2, .column = 14 }
@@ -385,16 +427,34 @@ test "with indents" {
         \\lexer.Token { .literal = "10", .type = "NUMBER", .line = 4, .column = 8 }
         \\lexer.Token { .literal = ":", .type = "COLON", .line = 4, .column = 10 }
         \\lexer.Token { .literal = "   ", .type = "INDENT", .line = 5, .column = 4 }
-        \\lexer.Token { .literal = "return", .type = "IDENT", .line = 5, .column = 4 }
-        \\lexer.Token { .literal = "true", .type = "IDENT", .line = 5, .column = 11 }
+        \\lexer.Token { .literal = "return", .type = "RETURN", .line = 5, .column = 4 }
+        \\lexer.Token { .literal = "True", .type = "TRUE", .line = 5, .column = 11 }
         \\lexer.Token { .literal = "", .type = "DEDENT", .line = 6, .column = 1 }
         \\lexer.Token { .literal = "else", .type = "ELSE", .line = 6, .column = 1 }
         \\lexer.Token { .literal = ":", .type = "COLON", .line = 6, .column = 5 }
         \\lexer.Token { .literal = "   ", .type = "INDENT", .line = 7, .column = 4 }
-        \\lexer.Token { .literal = "return", .type = "IDENT", .line = 7, .column = 4 }
-        \\lexer.Token { .literal = "false", .type = "IDENT", .line = 7, .column = 11 }
+        \\lexer.Token { .literal = "return", .type = "RETURN", .line = 7, .column = 4 }
+        \\lexer.Token { .literal = "False", .type = "FALSE", .line = 7, .column = 11 }
         \\lexer.Token { .literal = "", .type = "DEDENT", .line = 7, .column = 16 }
         \\lexer.Token { .literal = "", .type = "EOF", .line = 7, .column = 16 }
+        \\
+    ));
+}
+
+test "with two char tokens" {
+    const input =
+        \\10 == 10
+        \\10 != 9
+    ;
+
+    try checkLexerOutput(input, snap(@src(),
+        \\lexer.Token { .literal = "10", .type = "NUMBER", .line = 1, .column = 1 }
+        \\lexer.Token { .literal = "==", .type = "EQ", .line = 1, .column = 4 }
+        \\lexer.Token { .literal = "10", .type = "NUMBER", .line = 1, .column = 7 }
+        \\lexer.Token { .literal = "10", .type = "NUMBER", .line = 2, .column = 1 }
+        \\lexer.Token { .literal = "!=", .type = "NOT_EQ", .line = 2, .column = 4 }
+        \\lexer.Token { .literal = "9", .type = "NUMBER", .line = 2, .column = 7 }
+        \\lexer.Token { .literal = "", .type = "EOF", .line = 2, .column = 8 }
         \\
     ));
 }
