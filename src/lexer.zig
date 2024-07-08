@@ -65,8 +65,8 @@ fn lookupIdent(ident: []const u8) TokenType {
 const Token = struct {
     // ADD LATER
     // filename: []const u8,
-    line: isize,
-    column: isize,
+    line: usize,
+    column: usize,
     type: TokenType,
     literal: []const u8,
 
@@ -80,17 +80,17 @@ const Lexer = struct {
     // Whole input string
     input: []const u8,
     // Current position in input - points to current char
-    position: isize = 0,
+    position: usize = 0,
     // Current column in line
-    col: isize = 0,
+    col: usize = 0,
     // Current line (row) number
-    row: isize = 1,
+    row: usize = 1,
     // Current reading position in input - after current char
-    readPosition: isize = 0,
+    readPosition: usize = 0,
     // current char under examination
     ch: u8 = 0,
     // indentation level stack
-    indentStack: std.ArrayList(isize),
+    indentStack: std.ArrayList(usize),
     // stack of tokens; this is kept so that nextToken() can always return a singular character, as the lexer can sometimes output multiple tokens e.g. when moving out of nested blocks
     tokensStack: std.ArrayList(Token),
     // Whether the lexer has reached the end
@@ -99,7 +99,7 @@ const Lexer = struct {
     errored: bool = false,
 
     fn init(alloc: std.mem.Allocator, input: []const u8) !Lexer {
-        var lex: Lexer = .{ .input = input, .indentStack = std.ArrayList(isize).init(alloc), .tokensStack = std.ArrayList(Token).init(alloc) };
+        var lex: Lexer = .{ .input = input, .indentStack = std.ArrayList(usize).init(alloc), .tokensStack = std.ArrayList(Token).init(alloc) };
         // start with indent 0
         try lex.indentStack.insert(0, 0);
         lex.readChar();
@@ -116,7 +116,7 @@ const Lexer = struct {
             self.ch = 0;
         } else {
             // TODO: this might not work for utf-8 and only ascii?
-            self.ch = self.input[@intCast(self.readPosition)];
+            self.ch = self.input[self.readPosition];
         }
 
         self.position = self.readPosition;
@@ -127,7 +127,7 @@ const Lexer = struct {
     // Can return INDENT/DEDENT tokens
     fn skipWhitespace(self: *Lexer) !void {
         var movedLine = false;
-        var whitespaceStart: isize = 0;
+        var whitespaceStart: usize = 0;
 
         while (self.ch == ' ' or self.ch == '\t' or self.ch == '\n') {
             const isNewline = self.ch == '\n';
@@ -147,21 +147,21 @@ const Lexer = struct {
         // if we moved line, keep track of indentation changes
         if (movedLine) {
             const currentIndent = self.indentStack.getLast();
-            const whitespaceCount: isize = self.position - whitespaceStart;
+            const whitespaceCount: usize = self.position - whitespaceStart;
 
             // if indentation level is larger, it's pushed on the stack and INDENT is generated
             if (whitespaceCount > currentIndent) {
                 try self.indentStack.append(whitespaceCount);
-                try self.tokensStack.append(.{ .type = .INDENT, .literal = self.input[@intCast(whitespaceStart)..@intCast(self.position)], .line = self.row, .column = self.col });
+                try self.tokensStack.append(.{ .type = .INDENT, .literal = self.input[whitespaceStart..self.position], .line = self.row, .column = self.col });
             } else if (whitespaceCount < currentIndent) {
                 // if it's smaller, it must be one of the numbers occuring on the stack
-                const index = std.mem.indexOf(isize, self.indentStack.items, &[_]isize{whitespaceCount});
+                const index = std.mem.indexOf(usize, self.indentStack.items, &[_]usize{whitespaceCount});
 
                 // if it's not, this is an error
                 if (index == null) {
                     self.done = true;
                     self.errored = true;
-                    try self.tokensStack.append(.{ .type = .ILLEGAL, .literal = self.input[@intCast(whitespaceStart)..@intCast(self.position)], .line = self.row, .column = self.col });
+                    try self.tokensStack.append(.{ .type = .ILLEGAL, .literal = self.input[whitespaceStart..self.position], .line = self.row, .column = self.col });
                     return;
                 }
 
@@ -170,7 +170,7 @@ const Lexer = struct {
                 while (idx >= 0 and self.indentStack.items[idx] > whitespaceCount) {
                     idx -= 1;
                     _ = self.indentStack.pop();
-                    try self.tokensStack.append(.{ .type = .DEDENT, .literal = self.input[@intCast(whitespaceStart)..@intCast(self.position)], .line = self.row, .column = self.col });
+                    try self.tokensStack.append(.{ .type = .DEDENT, .literal = self.input[whitespaceStart..self.position], .line = self.row, .column = self.col });
                 }
             }
         }
@@ -183,7 +183,7 @@ const Lexer = struct {
             self.readChar();
         }
 
-        return self.input[@intCast(pos)..@intCast(self.position)];
+        return self.input[pos..self.position];
     }
 
     fn readIdentifier(self: *Lexer) []const u8 {
@@ -193,7 +193,7 @@ const Lexer = struct {
             self.readChar();
         }
 
-        return self.input[@intCast(pos)..@intCast(self.position)];
+        return self.input[pos..self.position];
     }
 
     fn nextToken(self: *Lexer) !?Token {
@@ -222,7 +222,7 @@ const Lexer = struct {
         const row = self.row;
 
         // self.ch represented as a string slice
-        const chSlice = if (self.readPosition <= self.input.len) self.input[@intCast(self.position)..@intCast(self.readPosition)] else "";
+        const chSlice = if (self.readPosition <= self.input.len) self.input[self.position..self.readPosition] else "";
 
         const tokenData: struct { type: TokenType, literal: []const u8 } = switch (self.ch) {
             '+' => .{ .type = .PLUS, .literal = chSlice },
