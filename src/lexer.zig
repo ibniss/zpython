@@ -8,9 +8,17 @@ const TokenType = enum {
     // Operators
     PLUS,
     ASSIGN,
+    MINUS,
+    BANG,
+    ASTERISK,
+    SLASH,
+
+    LT,
+    GT,
 
     // Delimiters
     COMMA,
+    COLON,
 
     // Brackets
     LPAREN,
@@ -20,7 +28,13 @@ const TokenType = enum {
 
     // Reserved keywords/identifiers
     DEF,
+    IF,
+    ELSE,
     IDENT, // user-defined
+
+    // Indentation
+    INDENT,
+    DEDENT,
 
     // illegal
     EOF,
@@ -37,26 +51,29 @@ fn lookupIdent(ident: []const u8) TokenType {
         return .DEF;
     }
 
+    if (std.mem.eql(u8, ident, "if")) {
+        return .IF;
+    }
+
+    if (std.mem.eql(u8, ident, "else")) {
+        return .ELSE;
+    }
+
     return .IDENT;
 }
 
 const Token = struct {
     // ADD LATER
     // filename: []const u8,
-    // line: isize,
-    // column: isize,
+    line: isize,
+    column: isize,
     type: TokenType,
     literal: []const u8,
 
     // Override default formatting, see std.fmt.format for signature
-
     pub fn format(self: Token, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("lexer.Token {{ .literal = \"{s}\", .type = \"{s}\" }}", .{ self.literal, @tagName(self.type) });
+        try writer.print("lexer.Token {{ .literal = \"{s}\", .type = \"{s}\", .line = {}, .column = {} }}", .{ self.literal, @tagName(self.type), self.line, self.column });
     }
-    //
-    // pub fn debug(self: *const Token) void {
-    //     std.debug.print("lexer.Token {{ .literal = \"{s}\", .type = \"{s}\" }}\n", .{ self.literal, @tagName(self.type) });
-    // }
 };
 
 const Lexer = struct {
@@ -64,15 +81,25 @@ const Lexer = struct {
     input: []const u8,
     // Current position in input - points to current char
     position: isize = 0,
+    // Current column in line
+    col: isize = 0,
+    // Current line (row) number
+    row: isize = 1,
     // Current reading position in input - after current char
     readPosition: isize = 0,
     // current char under examination
     ch: u8 = 0,
+    // indentation level stack
     indentStack: std.ArrayList(isize),
+    // stack of tokens; this is kept so that nextToken() can always return a singular character, as the lexer can sometimes output multiple tokens e.g. when moving out of nested blocks
+    tokensStack: std.ArrayList(Token),
+    // Whether the lexer has reached the end
     done: bool = false,
+    // Whether the lexer cannot proceed further
+    errored: bool = false,
 
     fn init(alloc: std.mem.Allocator, input: []const u8) !Lexer {
-        var lex: Lexer = .{ .input = input, .indentStack = std.ArrayList(isize).init(alloc) };
+        var lex: Lexer = .{ .input = input, .indentStack = std.ArrayList(isize).init(alloc), .tokensStack = std.ArrayList(Token).init(alloc) };
         // start with indent 0
         try lex.indentStack.insert(0, 0);
         lex.readChar();
@@ -81,6 +108,7 @@ const Lexer = struct {
 
     fn deinit(self: *Lexer) void {
         self.indentStack.deinit();
+        self.tokensStack.deinit();
     }
 
     fn readChar(self: *Lexer) void {
@@ -93,11 +121,58 @@ const Lexer = struct {
 
         self.position = self.readPosition;
         self.readPosition += 1;
+        self.col += 1;
     }
 
-    fn skipWhitespace(self: *Lexer) void {
+    // Can return INDENT/DEDENT tokens
+    fn skipWhitespace(self: *Lexer) !void {
+        var movedLine = false;
+        var whitespaceStart: isize = 0;
+
         while (self.ch == ' ' or self.ch == '\t' or self.ch == '\n') {
+            const isNewline = self.ch == '\n';
             self.readChar();
+
+            if (isNewline) {
+                // adjust position pointers
+                self.row += 1;
+                self.col = 1;
+
+                // reset whitespace start
+                movedLine = true;
+                whitespaceStart = self.position;
+            }
+        }
+
+        // if we moved line, keep track of indentation changes
+        if (movedLine) {
+            const currentIndent = self.indentStack.getLast();
+            const whitespaceCount: isize = self.position - whitespaceStart;
+
+            // if indentation level is larger, it's pushed on the stack and INDENT is generated
+            if (whitespaceCount > currentIndent) {
+                try self.indentStack.append(whitespaceCount);
+                try self.tokensStack.append(.{ .type = .INDENT, .literal = self.input[@intCast(whitespaceStart)..@intCast(self.position)], .line = self.row, .column = self.col });
+            } else if (whitespaceCount < currentIndent) {
+                // if it's smaller, it must be one of the numbers occuring on the stack
+                const index = std.mem.indexOf(isize, self.indentStack.items, &[_]isize{whitespaceCount});
+
+                // if it's not, this is an error
+                if (index == null) {
+                    self.done = true;
+                    self.errored = true;
+                    try self.tokensStack.append(.{ .type = .ILLEGAL, .literal = self.input[@intCast(whitespaceStart)..@intCast(self.position)], .line = self.row, .column = self.col });
+                    return;
+                }
+
+                // all numbers on the stack that are larger are popped off, and for each number popped off a DEDENT token is generated
+                var idx = self.indentStack.items.len - 1;
+                while (idx >= 0 and self.indentStack.items[idx] > whitespaceCount) {
+                    idx -= 1;
+                    _ = self.indentStack.pop();
+                    try self.tokensStack.append(.{ .type = .DEDENT, .literal = self.input[@intCast(whitespaceStart)..@intCast(self.position)], .line = self.row, .column = self.col });
+                }
+            }
         }
     }
 
@@ -121,48 +196,81 @@ const Lexer = struct {
         return self.input[@intCast(pos)..@intCast(self.position)];
     }
 
-    fn nextToken(self: *Lexer) ?Token {
+    fn nextToken(self: *Lexer) !?Token {
+        if (self.errored) {
+            return null;
+        }
+
+        // return item from the stack before proceeding
+        if (self.tokensStack.items.len > 0) {
+            return self.tokensStack.pop();
+        }
+
         if (self.done) {
             return null;
         }
 
-        self.skipWhitespace();
+        // skip until next non-whitespace token
+        try self.skipWhitespace();
 
+        // return item from the stack before proceeding, as whitespace skip could've added items to the stack
+        if (self.tokensStack.items.len > 0) {
+            return self.tokensStack.pop();
+        }
+
+        const col = self.col;
+        const row = self.row;
+
+        // self.ch represented as a string slice
         const chSlice = if (self.readPosition <= self.input.len) self.input[@intCast(self.position)..@intCast(self.readPosition)] else "";
 
-        // self.ch as a slice
-        std.debug.print("self.ch: \"{c}\"\n", .{self.ch});
-        std.debug.print("currentChSlice: \"{s}\"\n", .{chSlice});
-
-        const token: Token = switch (self.ch) {
+        const tokenData: struct { type: TokenType, literal: []const u8 } = switch (self.ch) {
             '+' => .{ .type = .PLUS, .literal = chSlice },
+            '-' => .{ .type = .MINUS, .literal = chSlice },
+            '!' => .{ .type = .BANG, .literal = chSlice },
+            '*' => .{ .type = .ASTERISK, .literal = chSlice },
+            '/' => .{ .type = .SLASH, .literal = chSlice },
+            '<' => .{ .type = .LT, .literal = chSlice },
+            '>' => .{ .type = .GT, .literal = chSlice },
             '=' => .{ .type = .ASSIGN, .literal = chSlice },
             ',' => .{ .type = .COMMA, .literal = chSlice },
+            ':' => .{ .type = .COLON, .literal = chSlice },
             '(' => .{ .type = .LPAREN, .literal = chSlice },
             ')' => .{ .type = .RPAREN, .literal = chSlice },
             '{' => .{ .type = .LBRACE, .literal = chSlice },
             '}' => .{ .type = .RBRACE, .literal = chSlice },
             0 => {
                 self.done = true;
-                return .{ .type = .EOF, .literal = chSlice };
+                try self.tokensStack.append(.{ .type = .EOF, .literal = chSlice, .column = col, .line = row });
+
+                // Produce dedents for each leftover on indentation stack
+                while (self.indentStack.popOrNull()) |indent| {
+                    if (indent > 0) {
+                        try self.tokensStack.append(.{ .type = .DEDENT, .literal = "", .line = self.row, .column = self.col });
+                    }
+                }
+
+                return self.tokensStack.pop();
             },
             else => {
                 if (isLetter(self.ch)) {
                     const literal = self.readIdentifier();
                     const typ = lookupIdent(literal);
 
-                    return .{ .type = typ, .literal = literal };
+                    return .{ .type = typ, .literal = literal, .column = col, .line = row };
                 } else if (std.ascii.isDigit(self.ch)) {
-                    return .{ .type = .NUMBER, .literal = self.readNumber() };
+                    return .{ .type = .NUMBER, .literal = self.readNumber(), .column = col, .line = row };
                 }
 
                 self.done = true;
-                return .{ .type = .ILLEGAL, .literal = chSlice };
+                self.errored = true;
+                return .{ .type = .ILLEGAL, .literal = chSlice, .column = col, .line = row };
             },
         };
+        std.debug.print("{any} {s}\n", .{ tokenData.type, tokenData.literal });
 
         self.readChar(); // read next one
-        return token;
+        return .{ .type = tokenData.type, .literal = tokenData.literal, .column = col, .line = row };
     }
 };
 
@@ -179,7 +287,7 @@ fn checkLexerOutput(input: []const u8, want: Snap) !void {
     var tokens = std.ArrayList(Token).init(t.allocator);
     defer tokens.deinit();
 
-    while (lexer.nextToken()) |tok| {
+    while (try lexer.nextToken()) |tok| {
         try tokens.append(tok);
     }
 
@@ -206,44 +314,87 @@ fn checkLexerOutput(input: []const u8, want: Snap) !void {
     try want.diff(outArr);
 }
 
-test "next token basic" {
-    const input = "=+,(){}";
-    try checkLexerOutput(input, snap(@src(),
-        \\lexer.Token { .literal = "=", .type = "ASSIGN" }
-        \\lexer.Token { .literal = "+", .type = "PLUS" }
-        \\lexer.Token { .literal = ",", .type = "COMMA" }
-        \\lexer.Token { .literal = "(", .type = "LPAREN" }
-        \\lexer.Token { .literal = ")", .type = "RPAREN" }
-        \\lexer.Token { .literal = "{", .type = "LBRACE" }
-        \\lexer.Token { .literal = "}", .type = "RBRACE" }
-        \\lexer.Token { .literal = "", .type = "EOF" }
-        \\
-    ));
-}
-
-test "next token ident" {
+test "next token no indent" {
     const input =
         \\five = 5
         \\ten = 10
         \\result = add(five, ten)
+        \\!-/*5
+        \\5 < 10 > 5
     ;
 
     try checkLexerOutput(input, snap(@src(),
-        \\lexer.Token { .literal = "five", .type = "IDENT" }
-        \\lexer.Token { .literal = "=", .type = "ASSIGN" }
-        \\lexer.Token { .literal = "5", .type = "NUMBER" }
-        \\lexer.Token { .literal = "ten", .type = "IDENT" }
-        \\lexer.Token { .literal = "=", .type = "ASSIGN" }
-        \\lexer.Token { .literal = "10", .type = "NUMBER" }
-        \\lexer.Token { .literal = "result", .type = "IDENT" }
-        \\lexer.Token { .literal = "=", .type = "ASSIGN" }
-        \\lexer.Token { .literal = "add", .type = "IDENT" }
-        \\lexer.Token { .literal = "(", .type = "LPAREN" }
-        \\lexer.Token { .literal = "five", .type = "IDENT" }
-        \\lexer.Token { .literal = ",", .type = "COMMA" }
-        \\lexer.Token { .literal = "ten", .type = "IDENT" }
-        \\lexer.Token { .literal = ")", .type = "RPAREN" }
-        \\lexer.Token { .literal = "", .type = "EOF" }
+        \\lexer.Token { .literal = "five", .type = "IDENT", .line = 1, .column = 1 }
+        \\lexer.Token { .literal = "=", .type = "ASSIGN", .line = 1, .column = 6 }
+        \\lexer.Token { .literal = "5", .type = "NUMBER", .line = 1, .column = 8 }
+        \\lexer.Token { .literal = "ten", .type = "IDENT", .line = 2, .column = 1 }
+        \\lexer.Token { .literal = "=", .type = "ASSIGN", .line = 2, .column = 5 }
+        \\lexer.Token { .literal = "10", .type = "NUMBER", .line = 2, .column = 7 }
+        \\lexer.Token { .literal = "result", .type = "IDENT", .line = 3, .column = 1 }
+        \\lexer.Token { .literal = "=", .type = "ASSIGN", .line = 3, .column = 8 }
+        \\lexer.Token { .literal = "add", .type = "IDENT", .line = 3, .column = 10 }
+        \\lexer.Token { .literal = "(", .type = "LPAREN", .line = 3, .column = 13 }
+        \\lexer.Token { .literal = "five", .type = "IDENT", .line = 3, .column = 14 }
+        \\lexer.Token { .literal = ",", .type = "COMMA", .line = 3, .column = 18 }
+        \\lexer.Token { .literal = "ten", .type = "IDENT", .line = 3, .column = 20 }
+        \\lexer.Token { .literal = ")", .type = "RPAREN", .line = 3, .column = 23 }
+        \\lexer.Token { .literal = "!", .type = "BANG", .line = 4, .column = 1 }
+        \\lexer.Token { .literal = "-", .type = "MINUS", .line = 4, .column = 2 }
+        \\lexer.Token { .literal = "/", .type = "SLASH", .line = 4, .column = 3 }
+        \\lexer.Token { .literal = "*", .type = "ASTERISK", .line = 4, .column = 4 }
+        \\lexer.Token { .literal = "5", .type = "NUMBER", .line = 4, .column = 5 }
+        \\lexer.Token { .literal = "5", .type = "NUMBER", .line = 5, .column = 1 }
+        \\lexer.Token { .literal = "<", .type = "LT", .line = 5, .column = 3 }
+        \\lexer.Token { .literal = "10", .type = "NUMBER", .line = 5, .column = 5 }
+        \\lexer.Token { .literal = ">", .type = "GT", .line = 5, .column = 8 }
+        \\lexer.Token { .literal = "5", .type = "NUMBER", .line = 5, .column = 10 }
+        \\lexer.Token { .literal = "", .type = "EOF", .line = 5, .column = 11 }
+        \\
+    ));
+}
+
+test "with indents" {
+    const input =
+        \\def add(x, y):
+        \\  return x + y
+        \\
+        \\if 5 < 10:
+        \\   return true
+        \\else:
+        \\   return false
+    ;
+
+    try checkLexerOutput(input, snap(@src(),
+        \\lexer.Token { .literal = "def", .type = "DEF", .line = 1, .column = 1 }
+        \\lexer.Token { .literal = "add", .type = "IDENT", .line = 1, .column = 5 }
+        \\lexer.Token { .literal = "(", .type = "LPAREN", .line = 1, .column = 8 }
+        \\lexer.Token { .literal = "x", .type = "IDENT", .line = 1, .column = 9 }
+        \\lexer.Token { .literal = ",", .type = "COMMA", .line = 1, .column = 10 }
+        \\lexer.Token { .literal = "y", .type = "IDENT", .line = 1, .column = 12 }
+        \\lexer.Token { .literal = ")", .type = "RPAREN", .line = 1, .column = 13 }
+        \\lexer.Token { .literal = ":", .type = "COLON", .line = 1, .column = 14 }
+        \\lexer.Token { .literal = "  ", .type = "INDENT", .line = 2, .column = 3 }
+        \\lexer.Token { .literal = "return", .type = "IDENT", .line = 2, .column = 3 }
+        \\lexer.Token { .literal = "x", .type = "IDENT", .line = 2, .column = 10 }
+        \\lexer.Token { .literal = "+", .type = "PLUS", .line = 2, .column = 12 }
+        \\lexer.Token { .literal = "y", .type = "IDENT", .line = 2, .column = 14 }
+        \\lexer.Token { .literal = "", .type = "DEDENT", .line = 4, .column = 1 }
+        \\lexer.Token { .literal = "if", .type = "IF", .line = 4, .column = 1 }
+        \\lexer.Token { .literal = "5", .type = "NUMBER", .line = 4, .column = 4 }
+        \\lexer.Token { .literal = "<", .type = "LT", .line = 4, .column = 6 }
+        \\lexer.Token { .literal = "10", .type = "NUMBER", .line = 4, .column = 8 }
+        \\lexer.Token { .literal = ":", .type = "COLON", .line = 4, .column = 10 }
+        \\lexer.Token { .literal = "   ", .type = "INDENT", .line = 5, .column = 4 }
+        \\lexer.Token { .literal = "return", .type = "IDENT", .line = 5, .column = 4 }
+        \\lexer.Token { .literal = "true", .type = "IDENT", .line = 5, .column = 11 }
+        \\lexer.Token { .literal = "", .type = "DEDENT", .line = 6, .column = 1 }
+        \\lexer.Token { .literal = "else", .type = "ELSE", .line = 6, .column = 1 }
+        \\lexer.Token { .literal = ":", .type = "COLON", .line = 6, .column = 5 }
+        \\lexer.Token { .literal = "   ", .type = "INDENT", .line = 7, .column = 4 }
+        \\lexer.Token { .literal = "return", .type = "IDENT", .line = 7, .column = 4 }
+        \\lexer.Token { .literal = "false", .type = "IDENT", .line = 7, .column = 11 }
+        \\lexer.Token { .literal = "", .type = "DEDENT", .line = 7, .column = 16 }
+        \\lexer.Token { .literal = "", .type = "EOF", .line = 7, .column = 16 }
         \\
     ));
 }
