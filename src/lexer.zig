@@ -107,6 +107,10 @@ pub const Lexer = struct {
 
         // if we moved line, keep track of indentation changes
         if (movedLine) {
+            // start of new logical line
+            // TODO: support implicit and explicit line joining
+            try self.tokensStack.append(.{ .type = .NEWLINE, .literal = "", .line = self.row, .column = self.col });
+
             const currentIndent = self.indentStack.getLast();
             const whitespaceCount: usize = self.position - whitespaceStart;
 
@@ -311,9 +315,11 @@ test "next token no indent" {
         \\lexer.Token { .literal = "five", .type = "NAME", .line = 1, .column = 1 }
         \\lexer.Token { .literal = "=", .type = "EQUAL", .line = 1, .column = 6 }
         \\lexer.Token { .literal = "5", .type = "NUMBER", .line = 1, .column = 8 }
+        \\lexer.Token { .literal = "", .type = "NEWLINE", .line = 2, .column = 1 }
         \\lexer.Token { .literal = "ten", .type = "NAME", .line = 2, .column = 1 }
         \\lexer.Token { .literal = "=", .type = "EQUAL", .line = 2, .column = 5 }
         \\lexer.Token { .literal = "10", .type = "NUMBER", .line = 2, .column = 7 }
+        \\lexer.Token { .literal = "", .type = "NEWLINE", .line = 3, .column = 1 }
         \\lexer.Token { .literal = "result", .type = "NAME", .line = 3, .column = 1 }
         \\lexer.Token { .literal = "=", .type = "EQUAL", .line = 3, .column = 8 }
         \\lexer.Token { .literal = "add", .type = "NAME", .line = 3, .column = 10 }
@@ -322,11 +328,13 @@ test "next token no indent" {
         \\lexer.Token { .literal = ",", .type = "COMMA", .line = 3, .column = 18 }
         \\lexer.Token { .literal = "ten", .type = "NAME", .line = 3, .column = 20 }
         \\lexer.Token { .literal = ")", .type = "RPAR", .line = 3, .column = 23 }
+        \\lexer.Token { .literal = "", .type = "NEWLINE", .line = 4, .column = 1 }
         \\lexer.Token { .literal = "!", .type = "EXCLAMATION", .line = 4, .column = 1 }
         \\lexer.Token { .literal = "-", .type = "MINUS", .line = 4, .column = 2 }
         \\lexer.Token { .literal = "/", .type = "SLASH", .line = 4, .column = 3 }
         \\lexer.Token { .literal = "*", .type = "STAR", .line = 4, .column = 4 }
         \\lexer.Token { .literal = "5", .type = "NUMBER", .line = 4, .column = 5 }
+        \\lexer.Token { .literal = "", .type = "NEWLINE", .line = 5, .column = 1 }
         \\lexer.Token { .literal = "5", .type = "NUMBER", .line = 5, .column = 1 }
         \\lexer.Token { .literal = "<", .type = "LESS", .line = 5, .column = 3 }
         \\lexer.Token { .literal = "10", .type = "NUMBER", .line = 5, .column = 5 }
@@ -358,23 +366,28 @@ test "with indents" {
         \\lexer.Token { .literal = ")", .type = "RPAR", .line = 1, .column = 13 }
         \\lexer.Token { .literal = ":", .type = "COLON", .line = 1, .column = 14 }
         \\lexer.Token { .literal = "  ", .type = "INDENT", .line = 2, .column = 3 }
+        \\lexer.Token { .literal = "", .type = "NEWLINE", .line = 2, .column = 3 }
         \\lexer.Token { .literal = "return", .type = "RETURN", .line = 2, .column = 3 }
         \\lexer.Token { .literal = "x", .type = "NAME", .line = 2, .column = 10 }
         \\lexer.Token { .literal = "+", .type = "PLUS", .line = 2, .column = 12 }
         \\lexer.Token { .literal = "y", .type = "NAME", .line = 2, .column = 14 }
         \\lexer.Token { .literal = "", .type = "DEDENT", .line = 4, .column = 1 }
+        \\lexer.Token { .literal = "", .type = "NEWLINE", .line = 4, .column = 1 }
         \\lexer.Token { .literal = "if", .type = "IF", .line = 4, .column = 1 }
         \\lexer.Token { .literal = "5", .type = "NUMBER", .line = 4, .column = 4 }
         \\lexer.Token { .literal = "<", .type = "LESS", .line = 4, .column = 6 }
         \\lexer.Token { .literal = "10", .type = "NUMBER", .line = 4, .column = 8 }
         \\lexer.Token { .literal = ":", .type = "COLON", .line = 4, .column = 10 }
         \\lexer.Token { .literal = "   ", .type = "INDENT", .line = 5, .column = 4 }
+        \\lexer.Token { .literal = "", .type = "NEWLINE", .line = 5, .column = 4 }
         \\lexer.Token { .literal = "return", .type = "RETURN", .line = 5, .column = 4 }
         \\lexer.Token { .literal = "True", .type = "TRUE", .line = 5, .column = 11 }
         \\lexer.Token { .literal = "", .type = "DEDENT", .line = 6, .column = 1 }
+        \\lexer.Token { .literal = "", .type = "NEWLINE", .line = 6, .column = 1 }
         \\lexer.Token { .literal = "else", .type = "ELSE", .line = 6, .column = 1 }
         \\lexer.Token { .literal = ":", .type = "COLON", .line = 6, .column = 5 }
         \\lexer.Token { .literal = "   ", .type = "INDENT", .line = 7, .column = 4 }
+        \\lexer.Token { .literal = "", .type = "NEWLINE", .line = 7, .column = 4 }
         \\lexer.Token { .literal = "return", .type = "RETURN", .line = 7, .column = 4 }
         \\lexer.Token { .literal = "False", .type = "FALSE", .line = 7, .column = 11 }
         \\lexer.Token { .literal = "", .type = "DEDENT", .line = 7, .column = 16 }
@@ -393,6 +406,7 @@ test "with two char tokens" {
         \\lexer.Token { .literal = "10", .type = "NUMBER", .line = 1, .column = 1 }
         \\lexer.Token { .literal = "==", .type = "EQEQUAL", .line = 1, .column = 4 }
         \\lexer.Token { .literal = "10", .type = "NUMBER", .line = 1, .column = 7 }
+        \\lexer.Token { .literal = "", .type = "NEWLINE", .line = 2, .column = 1 }
         \\lexer.Token { .literal = "10", .type = "NUMBER", .line = 2, .column = 1 }
         \\lexer.Token { .literal = "!=", .type = "NOTEQUAL", .line = 2, .column = 4 }
         \\lexer.Token { .literal = "9", .type = "NUMBER", .line = 2, .column = 7 }

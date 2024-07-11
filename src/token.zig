@@ -43,6 +43,9 @@ pub const TokenType = enum {
     INDENT,
     DEDENT,
 
+    // Logical new line start
+    NEWLINE,
+
     // illegal
     EOF,
     ILLEGAL,
@@ -53,7 +56,7 @@ pub const Token = struct {
     line: usize,
     column: usize,
     type: TokenType,
-    literal: []const u8,
+    literal: []const u8, // should this be optional?
 
     // Override default formatting, see std.fmt.format for signature
     pub fn format(self: Token, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {

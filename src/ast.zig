@@ -14,13 +14,13 @@ pub const Module = struct {
     }
 
     pub fn format(self: Module, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("Module(body=[\n", .{});
+        try writer.print("Module(\n  body=[\n", .{});
 
         for (self.body.items) |stmt| {
-            try writer.print("{s},\n", .{stmt});
+            try writer.print("    {s},\n", .{stmt});
         }
 
-        try writer.print("])", .{});
+        try writer.print("  ]\n)", .{});
     }
 };
 
@@ -39,21 +39,21 @@ pub const Stmt = union(enum) {
 
 pub const Assign = struct {
     // TODO: targets* in Python
-    target: *Name,
-    value: *Expr,
+    target: Name,
+    value: ?Expr, // TODO: nonnull
 
     pub fn format(self: Assign, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("Assign(target={any}, value={any})\n", .{ self.target, self.value });
+        try writer.print("Assign(target={s}, value={?})", .{ self.target, self.value });
     }
 };
 
 pub const Return = struct {
     // RETURN token
     token: Token,
-    value: ?*Expr,
+    value: ?Expr,
 
     pub fn format(self: Return, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("Return(value={any})\n", .{self.value});
+        try writer.print("Return(value={any})", .{self.value});
     }
 };
 
@@ -62,4 +62,8 @@ pub const Name = struct {
     token: Token,
     // the actual name referenced
     value: []const u8,
+
+    pub fn format(self: Name, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("Name(value=\"{s}\")", .{self.value});
+    }
 };
