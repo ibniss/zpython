@@ -22,10 +22,23 @@ fn parseNumber(parser: *Parser) ?ast.Expr {
     return .{ .constant = .{ .token = parser.cur_token, .value = parser.cur_token.literal } };
 }
 
+fn parseUnaryOp(parser: *Parser) ?ast.Expr {
+    const prefix = parser.cur_token;
+    parser.nextToken();
+    return .{
+        .unary = .{
+            .token = prefix,
+            .op = ast.UnaryOperator.fromToken(prefix),
+            .operand = parser.parseExpression(0) orelse @panic("Could not parse operand"),
+        },
+    };
+}
+
 // Precedences taken from pycopy-lib parser, mostly quantifying Python's expressions docs precedence order
 pub const token_infos = std.StaticStringMap(TokenInfo).initComptime(.{
     .{ @tagName(TokenType.NAME), .{ .lbp = 0, .prefix = parseName } },
     .{ @tagName(TokenType.NUMBER), .{ .lbp = 0, .prefix = parseNumber } },
+    .{ @tagName(TokenType.TILDE), .{ .lbp = 0, .prefix = parseUnaryOp } },
     .{ @tagName(TokenType.EQUAL), .{
         .lbp = 0,
     } },
@@ -46,6 +59,7 @@ pub const token_infos = std.StaticStringMap(TokenInfo).initComptime(.{
     } },
     .{ @tagName(TokenType.MINUS), .{
         .lbp = 110,
+        .prefix = parseUnaryOp,
     } },
     .{ @tagName(TokenType.STAR), .{
         .lbp = 120,

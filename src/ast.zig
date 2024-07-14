@@ -27,6 +27,7 @@ pub const Module = struct {
 pub const Expr = union(enum) {
     name: Name,
     constant: Constant,
+    unary: UnaryOp,
 
     pub fn format(self: Expr, comptime buf: []const u8, fmt: std.fmt.FormatOptions, writer: anytype) !void {
         switch (self) {
@@ -37,7 +38,16 @@ pub const Expr = union(enum) {
 pub const Stmt = union(enum) {
     assign: Assign,
     ret: Return,
-    expr: Expr,
+
+    // expression statemens - standalone expression
+    expr: struct {
+        const Self = @This();
+        value: *const Expr,
+
+        pub fn format(self: Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.print("Expr(value={s})", .{self.value});
+        }
+    },
 
     // comptime formatter which dispatches to the formatter for the correct union member
     pub fn format(self: Stmt, comptime buf: []const u8, fmt: std.fmt.FormatOptions, writer: anytype) !void {
@@ -49,8 +59,8 @@ pub const Stmt = union(enum) {
 
 pub const Assign = struct {
     // TODO: targets* in Python
-    target: Expr,
-    value: ?Expr, // TODO: nonnull
+    target: *const Expr,
+    value: ?*const Expr, // TODO: nonnull
 
     pub fn format(self: Assign, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try writer.print("Assign(target={s}, value={?})", .{ self.target, self.value });
@@ -60,7 +70,7 @@ pub const Assign = struct {
 pub const Return = struct {
     // RETURN token
     token: Token,
-    value: ?Expr,
+    value: ?*const Expr,
 
     pub fn format(self: Return, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try writer.print("Return(value={any})", .{self.value});
@@ -85,5 +95,52 @@ pub const Constant = struct {
 
     pub fn format(self: Constant, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try writer.print("Constant(value=\"{s}\")", .{self.value});
+    }
+};
+
+pub const UnaryOp = struct {
+    token: Token,
+    op: UnaryOperator,
+    operand: *const Expr,
+
+    pub fn format(self: UnaryOp, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("UnaryOp(op={s}, operand={s})", .{ self.op, self.operand });
+    }
+};
+
+pub const UnaryOperator = union(enum) {
+    usub: USub,
+    invert: Invert,
+
+    pub fn fromToken(token: Token) UnaryOperator {
+        return switch (token.type) {
+            .MINUS => .{ .usub = .{ .token = token } },
+            .TILDE => .{ .invert = .{ .token = token } },
+            else => std.debug.panic("Invalid unary operator token {s}\n", .{token}),
+        };
+    }
+
+    pub fn format(self: UnaryOperator, comptime buf: []const u8, fmt: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (self) {
+            inline else => |s| try s.format(buf, fmt, writer),
+        }
+    }
+};
+
+pub const USub = struct {
+    token: Token,
+
+    pub fn format(self: USub, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = self;
+        try writer.print("USub()", .{});
+    }
+};
+
+pub const Invert = struct {
+    token: Token,
+
+    pub fn format(self: Invert, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = self;
+        try writer.print("Invert()", .{});
     }
 };

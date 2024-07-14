@@ -10,7 +10,7 @@ const token_infos = _p.token_infos;
 const TokenInfo = _p.TokenInfo;
 
 pub const Parser = struct {
-    allocator: std.mem.Allocator,
+    arena: std.heap.ArenaAllocator,
     lexer: *Lexer,
     cur_token: Token,
 
@@ -18,7 +18,8 @@ pub const Parser = struct {
         const curr = try lexer.nextToken();
 
         const parser: Parser = .{
-            .allocator = allocator,
+            // use an arena to clear at once
+            .arena = std.heap.ArenaAllocator.init(allocator),
             .lexer = lexer,
             .cur_token = curr.?,
         };
@@ -27,7 +28,7 @@ pub const Parser = struct {
     }
 
     pub fn deinit(self: *Parser) void {
-        _ = self;
+        self.arena.deinit();
     }
 
     pub fn raiseError(self: *Parser, expected: TokenType, received: TokenType) void {
@@ -88,12 +89,7 @@ pub const Parser = struct {
         // ensure next token is a assign, move forward
         self.expect(.EQUAL);
 
-        // TODO: eval expr
-        while (!(self.check(.NEWLINE) or self.check(.ENDMARKER))) {
-            self.nextToken();
-        }
-
-        return .{ .target = name, .value = null };
+        return .{ .target = name, .value = self.parseExpression(0) };
     }
 
     fn getTokenInfo(self: *Parser) TokenInfo {
@@ -116,15 +112,23 @@ pub const Parser = struct {
         return token_infos.get(@tagName(TokenType.NAME)).?;
     }
 
-    fn parseExpression(self: *Parser, precedence: u8) ?ast.Expr {
+    pub fn parseExpression(self: *Parser, precedence: u8) ?*const ast.Expr {
         // TODO: handle newlines better
-        if (self.check(.NEWLINE)) {
+        if (self.check(.NEWLINE) or self.check(.INDENT) or self.check(.DEDENT)) {
             return null;
         }
         _ = precedence;
         const token_info = self.getTokenInfo();
         const prefixParser = token_info.prefix orelse return null;
-        return prefixParser(self);
+
+        // if parser returned a value, allocate an expression
+        if (prefixParser(self)) |v| {
+            const expr = self.arena.allocator().create(ast.Expr) catch unreachable;
+            expr.* = v;
+            return expr;
+        }
+
+        return null;
     }
 
     // fn parseExpressionStatement(self: *Parser) ?ast.Stmt {
@@ -137,33 +141,67 @@ pub const Parser = struct {
     //     return;
     // }
 
-    fn parseStatement(self: *Parser) ?ast.Stmt {
+    fn parseSimpleStatement(self: *Parser) ?ast.Stmt {
         // TODO: check statements like assert, global...
 
         // Otherwise it's some assignment etc starting with expression
-        const name = self.parseExpression(0);
+        const maybeName = self.parseExpression(0);
+        std.debug.print("name: {any}, current token: {any}\n", .{ maybeName, self.cur_token });
 
-        if (name == null) {
-            return null;
-        }
+        const name = maybeName orelse return null;
+
+        self.nextToken();
 
         if (self.match(.EQUAL)) {
+            std.debug.print("EQUAL {any}\n", .{self.cur_token});
             const value = self.parseExpression(0);
-            return .{ .assign = .{ .value = value, .target = name.? } };
+            return .{ .assign = .{ .value = value, .target = name } };
         }
 
         // no other forms matched so it's a standalone expression
-        return .{ .expr = name.? };
+        return .{ .expr = .{ .value = name } };
+    }
+
+    // Can return multiple as stmts can be semicolon separated
+    fn parseStatement(self: *Parser) ?*std.ArrayList(ast.Stmt) {
+        const firstStmt = self.parseSimpleStatement() orelse return null;
+
+        var statements = std.ArrayList(ast.Stmt).init(self.arena.allocator());
+        statements.append(firstStmt) catch unreachable;
+
+        // handle followup semi-separated statements
+        while (true) {
+            std.debug.print("while: {s}\n", .{self.cur_token});
+
+            // no semicolon, just breakout
+            if (!self.match(.SEMI)) {
+                break;
+            }
+
+            // otherwise if there's no newline, consume next statements
+            if (self.check(.NEWLINE)) {
+                break;
+            }
+
+            const matched = self.parseSimpleStatement() orelse break;
+            statements.append(matched) catch unreachable;
+        }
+
+        // Consume newlines and indent
+        _ = self.match(.NEWLINE);
+        _ = self.match(.INDENT);
+        return &statements;
     }
 
     pub fn parseProgram(self: *Parser) !ast.Module {
-        var module = ast.Module.init(self.allocator);
+        var module = ast.Module.init(self.arena.allocator());
 
         while (!self.check(.ENDMARKER)) {
             std.debug.print("loop, current {any}\n", .{self.cur_token});
-            const stmt = self.parseStatement();
-            if (stmt) |s| {
-                try module.body.append(s);
+            const statements = self.parseStatement();
+            if (statements) |stmts| {
+                // defer stmts.deinit();
+                try module.body.appendSlice(stmts.items);
             }
             // TODO: handle input not having a newline before the end? or just append in lexer
             self.nextToken();
@@ -210,20 +248,28 @@ test "can parse statements" {
         \\
     ;
 
-    // TODO: fix this, maybe add tracing
     try checkParserOutput(input, snap(@src(),
-        \\
+        \\Module(
+        \\  body=[
+        \\    Assign(target=Name(value="x"), value=Constant(value="5")),
+        \\    Assign(target=Name(value="y"), value=Constant(value="10")),
+        \\    Assign(target=Name(value="foobar"), value=Constant(value="838383")),
+        \\  ]
+        \\)
     ));
 }
-test "can parse expressions" {
+
+test "can parse unary expressions" {
     const input =
-        \\foobar
+        \\ -5
+        \\ ~9
     ;
 
     try checkParserOutput(input, snap(@src(),
         \\Module(
         \\  body=[
-        \\    Name(value="foobar"),
+        \\    Expr(value=UnaryOp(op=USub(), operand=Constant(value="5"))),
+        \\    Expr(value=UnaryOp(op=Invert(), operand=Constant(value="9"))),
         \\  ]
         \\)
     ));

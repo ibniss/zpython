@@ -16,6 +16,7 @@ pub const TokenType = enum {
     EXCLAMATION,
     STAR,
     SLASH,
+    TILDE,
 
     // Comparison
     LESS,
@@ -43,6 +44,7 @@ pub const TokenType = enum {
     NEWLINE,
     // TODO: NL - when a logical line is continued over physical lines
 
+    SEMI,
     ENDMARKER,
     ILLEGAL,
 };

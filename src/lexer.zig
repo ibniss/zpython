@@ -172,6 +172,7 @@ pub const Lexer = struct {
         const tokenData: struct { type: TokenType, literal: []const u8 } = switch (self.ch) {
             '+' => .{ .type = .PLUS, .literal = chSlice },
             '-' => .{ .type = .MINUS, .literal = chSlice },
+            '~' => .{ .type = .TILDE, .literal = chSlice },
             '!' => bang: {
                 if (self.peekChar() == '=') {
                     self.readChar();
@@ -200,6 +201,7 @@ pub const Lexer = struct {
             ')' => .{ .type = .RPAR, .literal = chSlice },
             '{' => .{ .type = .LBRACE, .literal = chSlice },
             '}' => .{ .type = .RBRACE, .literal = chSlice },
+            ';' => .{ .type = .SEMI, .literal = chSlice },
             0 => {
                 self.done = true;
                 try self.tokens_stack.append(.{ .type = .ENDMARKER, .literal = chSlice, .column = col, .line = row });
