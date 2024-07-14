@@ -28,6 +28,7 @@ pub const Expr = union(enum) {
     name: Name,
     constant: Constant,
     unary: UnaryOp,
+    binary: BinaryOp,
 
     pub fn format(self: Expr, comptime buf: []const u8, fmt: std.fmt.FormatOptions, writer: anytype) !void {
         switch (self) {
@@ -108,39 +109,55 @@ pub const UnaryOp = struct {
     }
 };
 
+pub const BinaryOp = struct {
+    token: Token,
+    left: *const Expr,
+    op: BinaryOperator,
+    right: *const Expr,
+
+    pub fn format(self: BinaryOp, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("BinOp(left={s}, op={s}, right={s})", .{ self.left, self.op, self.right });
+    }
+};
+
+pub const BinaryOperator = union(enum) {
+    Add: struct { token: Token },
+    Sub: struct { token: Token },
+    Mult: struct { token: Token },
+    Div: struct { token: Token },
+    FloorDiv: struct { token: Token },
+    Mod: struct { token: Token },
+
+    pub fn fromToken(token: Token) BinaryOperator {
+        return switch (token.type) {
+            .PLUS => .{ .Add = .{ .token = token } },
+            .MINUS => .{ .Sub = .{ .token = token } },
+            .STAR => .{ .Mult = .{ .token = token } },
+            .SLASH => .{ .Div = .{ .token = token } },
+            .DOUBLESLASH => .{ .FloorDiv = .{ .token = token } },
+            .PERCENT => .{ .Mod = .{ .token = token } },
+            else => std.debug.panic("Invalid binary operator token {s}\n", .{token}),
+        };
+    }
+
+    pub fn format(self: BinaryOperator, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("{s}()", .{@tagName(self)});
+    }
+};
+
 pub const UnaryOperator = union(enum) {
-    usub: USub,
-    invert: Invert,
+    USub: struct { token: Token },
+    Invert: struct { token: Token },
 
     pub fn fromToken(token: Token) UnaryOperator {
         return switch (token.type) {
-            .MINUS => .{ .usub = .{ .token = token } },
-            .TILDE => .{ .invert = .{ .token = token } },
+            .MINUS => .{ .USub = .{ .token = token } },
+            .TILDE => .{ .Invert = .{ .token = token } },
             else => std.debug.panic("Invalid unary operator token {s}\n", .{token}),
         };
     }
 
-    pub fn format(self: UnaryOperator, comptime buf: []const u8, fmt: std.fmt.FormatOptions, writer: anytype) !void {
-        switch (self) {
-            inline else => |s| try s.format(buf, fmt, writer),
-        }
-    }
-};
-
-pub const USub = struct {
-    token: Token,
-
-    pub fn format(self: USub, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = self;
-        try writer.print("USub()", .{});
-    }
-};
-
-pub const Invert = struct {
-    token: Token,
-
-    pub fn format(self: Invert, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = self;
-        try writer.print("Invert()", .{});
+    pub fn format(self: UnaryOperator, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("{s}()", .{@tagName(self)});
     }
 };

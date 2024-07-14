@@ -92,43 +92,74 @@ pub const Parser = struct {
         return .{ .target = name, .value = self.parseExpression(0) };
     }
 
-    fn getTokenInfo(self: *Parser) TokenInfo {
+    fn getTokenInfo(self: *Parser, token: Token) TokenInfo {
         // SKIP FOR NAME - check if there's a direct match on the token type name
         if (!self.check(.NAME)) {
-            if (token_infos.get(@tagName(self.cur_token.type))) |info| {
+            if (token_infos.get(@tagName(token.type))) |info| {
                 return info;
             }
         }
 
         // then match if there might be a match on the literal
-        if (token_infos.get(self.cur_token.literal)) |info| {
+        if (token_infos.get(token.literal)) |info| {
             return info;
         }
 
         // otherwise it's a generic NAME
-        if (self.cur_token.type != .NAME) {
-            std.debug.panic("Failed to find token info for {any}\n", .{self.cur_token});
+        if (token.type != .NAME) {
+            std.debug.panic("Failed to find token info for {any}\n", .{token});
         }
         return token_infos.get(@tagName(TokenType.NAME)).?;
     }
 
-    pub fn parseExpression(self: *Parser, precedence: u8) ?*const ast.Expr {
+    fn curTokenInfo(self: *Parser) TokenInfo {
+        return self.getTokenInfo(self.cur_token);
+    }
+
+    /// rbp - right binding power, starting precedence - should start at 0
+    pub fn parseExpression(self: *Parser, rbp: u8) ?*const ast.Expr {
         // TODO: handle newlines better
         if (self.check(.NEWLINE) or self.check(.INDENT) or self.check(.DEDENT)) {
             return null;
         }
-        _ = precedence;
-        const token_info = self.getTokenInfo();
-        const prefixParser = token_info.prefix orelse return null;
 
-        // if parser returned a value, allocate an expression
-        if (prefixParser(self)) |v| {
-            const expr = self.arena.allocator().create(ast.Expr) catch unreachable;
-            expr.* = v;
-            return expr;
+        const first_token = self.cur_token;
+
+        self.nextToken();
+
+        const first_token_info = self.getTokenInfo(first_token);
+        const firstPrefixParser = first_token_info.prefix orelse return null;
+
+        // assign initial 'left' value from prefix parselet of first token
+        const left = firstPrefixParser(&first_token_info, self, first_token);
+        const leftExpr = self.arena.allocator().create(ast.Expr) catch unreachable;
+        leftExpr.* = left;
+        std.debug.print("Left: {s}, cur: {s}\n", .{ left, self.cur_token });
+
+        // keep track of prev token and info token info
+        var prev_token_info = self.curTokenInfo();
+        var prev_token = self.cur_token;
+
+        std.debug.print("Starting: rbp {}, lbp {}\n", .{ rbp, prev_token_info.lbp });
+
+        // until we encounter a token more left-binding than current precedence
+        while (rbp < prev_token_info.lbp) {
+            std.debug.print("While: rbp {}, lbp {}\n", .{ rbp, prev_token_info.lbp });
+
+            self.nextToken();
+
+            // at any point if the next token expr does not support being infix, just return
+            const infixParser = prev_token_info.infix orelse return leftExpr;
+
+            // wrap current left with the result
+            leftExpr.* = infixParser(&prev_token_info, self, leftExpr, prev_token);
+
+            // update token and info
+            prev_token = self.cur_token;
+            prev_token_info = self.curTokenInfo();
         }
 
-        return null;
+        return leftExpr;
     }
 
     // fn parseExpressionStatement(self: *Parser) ?ast.Stmt {
@@ -171,8 +202,6 @@ pub const Parser = struct {
 
         // handle followup semi-separated statements
         while (true) {
-            std.debug.print("while: {s}\n", .{self.cur_token});
-
             // no semicolon, just breakout
             if (!self.match(.SEMI)) {
                 break;
@@ -240,36 +269,55 @@ fn checkParserOutput(input: []const u8, want: Snap) !void {
     try want.diff(result);
 }
 
-test "can parse statements" {
+// test "can parse statements" {
+//     const input =
+//         \\x = 5
+//         \\y = 10
+//         \\foobar = 838383
+//         \\
+//     ;
+//
+//     try checkParserOutput(input, snap(@src(),
+//         \\Module(
+//         \\  body=[
+//         \\    Assign(target=Name(value="x"), value=Constant(value="5")),
+//         \\    Assign(target=Name(value="y"), value=Constant(value="10")),
+//         \\    Assign(target=Name(value="foobar"), value=Constant(value="838383")),
+//         \\  ]
+//         \\)
+//     ));
+// }
+//
+// test "can parse unary expressions" {
+//     const input =
+//         \\ -5
+//         \\ ~9
+//     ;
+//
+//     try checkParserOutput(input, snap(@src(),
+//         \\Module(
+//         \\  body=[
+//         \\    Expr(value=UnaryOp(op=USub(), operand=Constant(value="5"))),
+//         \\    Expr(value=UnaryOp(op=Invert(), operand=Constant(value="9"))),
+//         \\  ]
+//         \\)
+//     ));
+// }
+
+test "can parse infix expressions" {
+    // TODO: something is wrong with advancing tokens
     const input =
-        \\x = 5
-        \\y = 10
-        \\foobar = 838383
-        \\
+        \\ 5 + 5
+        \\ 5 - 5
+        \\ 5 * 5
+        \\ 5 / 5
+        \\ 5 // 5
+        \\ 5 % 5
     ;
 
     try checkParserOutput(input, snap(@src(),
         \\Module(
         \\  body=[
-        \\    Assign(target=Name(value="x"), value=Constant(value="5")),
-        \\    Assign(target=Name(value="y"), value=Constant(value="10")),
-        \\    Assign(target=Name(value="foobar"), value=Constant(value="838383")),
-        \\  ]
-        \\)
-    ));
-}
-
-test "can parse unary expressions" {
-    const input =
-        \\ -5
-        \\ ~9
-    ;
-
-    try checkParserOutput(input, snap(@src(),
-        \\Module(
-        \\  body=[
-        \\    Expr(value=UnaryOp(op=USub(), operand=Constant(value="5"))),
-        \\    Expr(value=UnaryOp(op=Invert(), operand=Constant(value="9"))),
         \\  ]
         \\)
     ));

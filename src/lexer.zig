@@ -173,6 +173,7 @@ pub const Lexer = struct {
             '+' => .{ .type = .PLUS, .literal = chSlice },
             '-' => .{ .type = .MINUS, .literal = chSlice },
             '~' => .{ .type = .TILDE, .literal = chSlice },
+            '%' => .{ .type = .PERCENT, .literal = chSlice },
             '!' => bang: {
                 if (self.peekChar() == '=') {
                     self.readChar();
@@ -183,7 +184,15 @@ pub const Lexer = struct {
                 break :bang .{ .type = .EXCLAMATION, .literal = chSlice };
             },
             '*' => .{ .type = .STAR, .literal = chSlice },
-            '/' => .{ .type = .SLASH, .literal = chSlice },
+            '/' => slash: {
+                if (self.peekChar() == '/') {
+                    self.readChar();
+                    // extend the slice to include next char
+                    break :slash .{ .type = .DOUBLESLASH, .literal = self.input[self.position - 1 .. self.read_position] };
+                }
+
+                break :slash .{ .type = .SLASH, .literal = chSlice };
+            },
             '<' => .{ .type = .LESS, .literal = chSlice },
             '>' => .{ .type = .GREATER, .literal = chSlice },
             '=' => eq: {
