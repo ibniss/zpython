@@ -24,10 +24,19 @@ pub const Module = struct {
     }
 };
 
-pub const Expr = union(enum) { name: Name };
+pub const Expr = union(enum) {
+    name: Name,
+
+    pub fn format(self: Expr, comptime buf: []const u8, fmt: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (self) {
+            inline else => |s| try s.format(buf, fmt, writer),
+        }
+    }
+};
 pub const Stmt = union(enum) {
     assign: Assign,
     ret: Return,
+    expr: Expr,
 
     // comptime formatter which dispatches to the formatter for the correct union member
     pub fn format(self: Stmt, comptime buf: []const u8, fmt: std.fmt.FormatOptions, writer: anytype) !void {

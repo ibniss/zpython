@@ -1,5 +1,9 @@
 const std = @import("std");
+const Parser = @import("./parser.zig").Parser;
+const ast = @import("./ast.zig");
+const assert = @import("./assert.zig").assert;
 
+// Refer to https://docs.python.org/3/library/token.html
 pub const TokenType = enum {
     // Literals
     NUMBER,
@@ -29,15 +33,7 @@ pub const TokenType = enum {
     LBRACE,
     RBRACE,
 
-    // Reserved keywords/identifiers TODO: these aren't different tokens in Python, just identifiers
-    DEF,
-    IF,
-    ELSE,
-    RETURN,
-    TRUE,
-    FALSE,
-
-    NAME, // user-defined
+    NAME, // Any identifier, whether user defined or not
 
     // Indentation
     INDENT,
@@ -45,11 +41,13 @@ pub const TokenType = enum {
 
     // Logical new line start
     NEWLINE,
+    // TODO: NL - when a logical line is continued over physical lines
 
-    // illegal
-    EOF,
+    ENDMARKER,
     ILLEGAL,
 };
+
+// Represents an instance of a token
 pub const Token = struct {
     // ADD LATER
     // filename: []const u8,
