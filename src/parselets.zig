@@ -8,17 +8,24 @@ const std = @import("std");
 
 // Represents information about a Pratt token
 pub const TokenInfo = struct {
-    prefix: ?fn (*Parser) ?*ast.Expr,
-    infix: ?fn (*Parser) ?*ast.Expr,
+    prefix: ?*const fn (*Parser) ?ast.Expr = null,
+    infix: ?*const fn (*Parser) ?ast.Expr = null,
     // left-binding power
     lbp: u8,
 };
 
+fn parseName(parser: *Parser) ?ast.Expr {
+    return .{ .name = .{ .token = parser.cur_token, .value = parser.cur_token.literal } };
+}
+
+fn parseNumber(parser: *Parser) ?ast.Expr {
+    return .{ .constant = .{ .token = parser.cur_token, .value = parser.cur_token.literal } };
+}
+
 // Precedences taken from pycopy-lib parser, mostly quantifying Python's expressions docs precedence order
-const tokenInfos = std.StaticStringMap(TokenInfo).initComptime(.{
-    .{ @tagName(TokenType.NAME), .{
-        .lbp = 0,
-    } },
+pub const token_infos = std.StaticStringMap(TokenInfo).initComptime(.{
+    .{ @tagName(TokenType.NAME), .{ .lbp = 0, .prefix = parseName } },
+    .{ @tagName(TokenType.NUMBER), .{ .lbp = 0, .prefix = parseNumber } },
     .{ @tagName(TokenType.EQUAL), .{
         .lbp = 0,
     } },
@@ -53,9 +60,3 @@ const tokenInfos = std.StaticStringMap(TokenInfo).initComptime(.{
         .lbp = 200,
     } },
 });
-
-pub fn getTokenInfo(typ: TokenType) TokenInfo {
-    const info = tokenInfos[@intFromEnum(typ)];
-    assert(info.typ == typ, "Token info order error");
-    return info;
-}

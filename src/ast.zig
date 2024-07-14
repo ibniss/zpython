@@ -26,6 +26,7 @@ pub const Module = struct {
 
 pub const Expr = union(enum) {
     name: Name,
+    constant: Constant,
 
     pub fn format(self: Expr, comptime buf: []const u8, fmt: std.fmt.FormatOptions, writer: anytype) !void {
         switch (self) {
@@ -48,7 +49,7 @@ pub const Stmt = union(enum) {
 
 pub const Assign = struct {
     // TODO: targets* in Python
-    target: Name,
+    target: Expr,
     value: ?Expr, // TODO: nonnull
 
     pub fn format(self: Assign, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -74,5 +75,15 @@ pub const Name = struct {
 
     pub fn format(self: Name, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try writer.print("Name(value=\"{s}\")", .{self.value});
+    }
+};
+
+pub const Constant = struct {
+    token: Token,
+    // TODO: can be number, string, etc
+    value: []const u8,
+
+    pub fn format(self: Constant, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("Constant(value=\"{s}\")", .{self.value});
     }
 };

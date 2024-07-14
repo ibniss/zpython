@@ -156,7 +156,6 @@ pub const Lexer = struct {
 
         // skip until next non-whitespace token
         try self.skipWhitespace();
-        std.debug.print("Skipped until {any}\n", .{self.peekChar()});
 
         // return item from the stack before proceeding, as whitespace skip could've added items to the stack
         if (self.tokens_stack.items.len > 0) {
@@ -213,7 +212,6 @@ pub const Lexer = struct {
                 }
 
                 const foo = self.tokens_stack.pop();
-                std.debug.print("Returning {any}\n", .{foo});
                 return foo;
                 //return self.tokens_stack.pop();
             },

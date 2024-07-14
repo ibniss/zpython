@@ -5,6 +5,9 @@ const Token = _t.Token;
 const TokenType = _t.TokenType;
 const ast = @import("./ast.zig");
 const Lexer = @import("./lexer.zig").Lexer;
+const _p = @import("./parselets.zig");
+const token_infos = _p.token_infos;
+const TokenInfo = _p.TokenInfo;
 
 pub const Parser = struct {
     allocator: std.mem.Allocator,
@@ -34,7 +37,6 @@ pub const Parser = struct {
 
     pub fn nextToken(self: *Parser) void {
         // TODO: skip over comments/NL?
-        std.debug.print("current {any}\n", .{self.cur_token});
         self.cur_token = (self.lexer.nextToken() catch unreachable).?;
     }
 
@@ -88,18 +90,43 @@ pub const Parser = struct {
 
         // TODO: eval expr
         while (!(self.check(.NEWLINE) or self.check(.ENDMARKER))) {
-            std.debug.print("skipping current {any}, {any}, {any}\n", .{ self.cur_token, self.check(.NEWLINE), self.check(.ENDMARKER) });
             self.nextToken();
         }
 
         return .{ .target = name, .value = null };
     }
 
-    // fn parseExpression(self: *Parser) ?ast.Expr {
-    //
-    //
-    // }
-    //
+    fn getTokenInfo(self: *Parser) TokenInfo {
+        // SKIP FOR NAME - check if there's a direct match on the token type name
+        if (!self.check(.NAME)) {
+            if (token_infos.get(@tagName(self.cur_token.type))) |info| {
+                return info;
+            }
+        }
+
+        // then match if there might be a match on the literal
+        if (token_infos.get(self.cur_token.literal)) |info| {
+            return info;
+        }
+
+        // otherwise it's a generic NAME
+        if (self.cur_token.type != .NAME) {
+            std.debug.panic("Failed to find token info for {any}\n", .{self.cur_token});
+        }
+        return token_infos.get(@tagName(TokenType.NAME)).?;
+    }
+
+    fn parseExpression(self: *Parser, precedence: u8) ?ast.Expr {
+        // TODO: handle newlines better
+        if (self.check(.NEWLINE)) {
+            return null;
+        }
+        _ = precedence;
+        const token_info = self.getTokenInfo();
+        const prefixParser = token_info.prefix orelse return null;
+        return prefixParser(self);
+    }
+
     // fn parseExpressionStatement(self: *Parser) ?ast.Stmt {
     //     const expression = self.parseExpression();
     //
@@ -111,19 +138,22 @@ pub const Parser = struct {
     // }
 
     fn parseStatement(self: *Parser) ?ast.Stmt {
-        return switch (self.cur_token.type) {
-            // .RETURN => .{ .ret = self.parseReturn() },
-            else => els: {
-                // TODO: match equal should be checked after other simple statements (del, global, etc)
-                // no keywords were matched so check if next token is an equal
-                if (self.parseAssign()) |ass| {
-                    break :els .{ .assign = ass };
-                }
+        // TODO: check statements like assert, global...
 
-                break :els null;
-                // break :els self.parseExpressionStatement();
-            },
-        };
+        // Otherwise it's some assignment etc starting with expression
+        const name = self.parseExpression(0);
+
+        if (name == null) {
+            return null;
+        }
+
+        if (self.match(.EQUAL)) {
+            const value = self.parseExpression(0);
+            return .{ .assign = .{ .value = value, .target = name.? } };
+        }
+
+        // no other forms matched so it's a standalone expression
+        return .{ .expr = name.? };
     }
 
     pub fn parseProgram(self: *Parser) !ast.Module {
@@ -180,23 +210,21 @@ test "can parse statements" {
         \\
     ;
 
+    // TODO: fix this, maybe add tracing
+    try checkParserOutput(input, snap(@src(),
+        \\
+    ));
+}
+test "can parse expressions" {
+    const input =
+        \\foobar
+    ;
+
     try checkParserOutput(input, snap(@src(),
         \\Module(
         \\  body=[
-        \\    Assign(target=Name(value="x"), value=null),
-        \\    Assign(target=Name(value="y"), value=null),
-        \\    Assign(target=Name(value="foobar"), value=null),
+        \\    Name(value="foobar"),
         \\  ]
         \\)
     ));
 }
-
-// test "can parse expressions" {
-//     const input =
-//         \\foobar
-//     ;
-//
-//     try checkParserOutput(input, snap(@src(),
-//         \\
-//     ));
-// }
