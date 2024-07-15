@@ -134,18 +134,13 @@ pub const Parser = struct {
         const left = firstPrefixParser(&first_token_info, self, first_token);
         const leftExpr = self.arena.allocator().create(ast.Expr) catch unreachable;
         leftExpr.* = left;
-        std.debug.print("Left: {s}, cur: {s}\n", .{ left, self.cur_token });
 
         // keep track of prev token and info token info
         var prev_token_info = self.curTokenInfo();
         var prev_token = self.cur_token;
 
-        std.debug.print("Starting: rbp {}, lbp {}\n", .{ rbp, prev_token_info.lbp });
-
         // until we encounter a token more left-binding than current precedence
         while (rbp < prev_token_info.lbp) {
-            std.debug.print("While: rbp {}, lbp {}\n", .{ rbp, prev_token_info.lbp });
-
             self.nextToken();
 
             // at any point if the next token expr does not support being infix, just return
@@ -177,14 +172,10 @@ pub const Parser = struct {
 
         // Otherwise it's some assignment etc starting with expression
         const maybeName = self.parseExpression(0);
-        std.debug.print("name: {any}, current token: {any}\n", .{ maybeName, self.cur_token });
 
         const name = maybeName orelse return null;
 
-        self.nextToken();
-
         if (self.match(.EQUAL)) {
-            std.debug.print("EQUAL {any}\n", .{self.cur_token});
             const value = self.parseExpression(0);
             return .{ .assign = .{ .value = value, .target = name } };
         }
@@ -226,14 +217,11 @@ pub const Parser = struct {
         var module = ast.Module.init(self.arena.allocator());
 
         while (!self.check(.ENDMARKER)) {
-            std.debug.print("loop, current {any}\n", .{self.cur_token});
             const statements = self.parseStatement();
             if (statements) |stmts| {
                 // defer stmts.deinit();
                 try module.body.appendSlice(stmts.items);
             }
-            // TODO: handle input not having a newline before the end? or just append in lexer
-            self.nextToken();
         }
 
         return module;
@@ -253,16 +241,6 @@ fn checkParserOutput(input: []const u8, want: Snap) !void {
 
     const module = try parser.parseProgram();
     defer module.deinit();
-
-    //if (parser.errors.items.len > 0) {
-    //    std.debug.print("Encountered {} parser errors:\n", .{parser.errors.items.len});
-    //    for (parser.errors.items) |err| {
-    //        std.debug.print("parser error: {s}\n", .{err});
-    //    }
-    //    std.debug.print("Parser output: {s}\n", .{module});
-    //    // fail here
-    //    try t.expect(parser.errors.items.len == 0);
-    //}
 
     const result = try std.fmt.allocPrint(t.allocator, "{s}", .{module});
     defer t.allocator.free(result);
@@ -288,36 +266,43 @@ fn checkParserOutput(input: []const u8, want: Snap) !void {
 //     ));
 // }
 //
-// test "can parse unary expressions" {
-//     const input =
-//         \\ -5
-//         \\ ~9
-//     ;
-//
-//     try checkParserOutput(input, snap(@src(),
-//         \\Module(
-//         \\  body=[
-//         \\    Expr(value=UnaryOp(op=USub(), operand=Constant(value="5"))),
-//         \\    Expr(value=UnaryOp(op=Invert(), operand=Constant(value="9"))),
-//         \\  ]
-//         \\)
-//     ));
-// }
-
-test "can parse infix expressions" {
-    // TODO: something is wrong with advancing tokens
+test "can parse unary expressions" {
     const input =
-        \\ 5 + 5
-        \\ 5 - 5
-        \\ 5 * 5
-        \\ 5 / 5
-        \\ 5 // 5
-        \\ 5 % 5
+        \\-5
+        \\~9
     ;
 
     try checkParserOutput(input, snap(@src(),
         \\Module(
         \\  body=[
+        \\    Expr(value=UnaryOp(op=USub(), operand=Constant(value="5"))),
+        \\    Expr(value=UnaryOp(op=Invert(), operand=Constant(value="9"))),
+        \\  ]
+        \\)
+    ));
+}
+
+test "can parse infix expressions" {
+    // TODO: something is wrong with advancing tokens
+    // TODO: checkout the python copy and trace through it how they handle token advancing
+    const input =
+        \\5 + 5
+        \\5 - 5
+        \\5 * 5
+        \\5 / 5
+        \\5 // 5
+        \\5 % 5
+    ;
+
+    try checkParserOutput(input, snap(@src(),
+        \\Module(
+        \\  body=[
+        \\    Expr(value=BinOp(left=Constant(value="5"), op=Add(), right=Constant(value="5"))),
+        \\    Expr(value=BinOp(left=Constant(value="5"), op=Sub(), right=Constant(value="5"))),
+        \\    Expr(value=BinOp(left=Constant(value="5"), op=Mult(), right=Constant(value="5"))),
+        \\    Expr(value=BinOp(left=Constant(value="5"), op=Div(), right=Constant(value="5"))),
+        \\    Expr(value=BinOp(left=Constant(value="5"), op=FloorDiv(), right=Constant(value="5"))),
+        \\    Expr(value=BinOp(left=Constant(value="5"), op=Mod(), right=Constant(value="5"))),
         \\  ]
         \\)
     ));

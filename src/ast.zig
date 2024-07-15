@@ -32,6 +32,7 @@ pub const Expr = union(enum) {
 
     pub fn format(self: Expr, comptime buf: []const u8, fmt: std.fmt.FormatOptions, writer: anytype) !void {
         switch (self) {
+            .constant => |s| try s.format(buf, fmt, writer),
             inline else => |s| try s.format(buf, fmt, writer),
         }
     }
@@ -116,6 +117,7 @@ pub const BinaryOp = struct {
     right: *const Expr,
 
     pub fn format(self: BinaryOp, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        // try writer.print("BinOp(, op={s}, right={s})", .{ self.op, self.right });
         try writer.print("BinOp(left={s}, op={s}, right={s})", .{ self.left, self.op, self.right });
     }
 };

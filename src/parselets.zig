@@ -29,7 +29,6 @@ fn parseNumber(_: *const TokenInfo, parser: *Parser, token: Token) ast.Expr {
 
 fn parseUnaryOp(ti: *const TokenInfo, parser: *Parser, token: Token) ast.Expr {
     const prefix = token;
-    parser.nextToken();
     return .{
         .unary = .{
             .token = prefix,
@@ -42,9 +41,14 @@ fn parseUnaryOp(ti: *const TokenInfo, parser: *Parser, token: Token) ast.Expr {
 fn parseBinaryOp(ti: *const TokenInfo, parser: *Parser, left: *const ast.Expr, token: Token) ast.Expr {
     const right = parser.parseExpression(ti.lbp) orelse @panic("Could not parse right of binary op");
 
+    // Important: create new pointer rather than reuse the same one as passed
+    // deallocation is handled by the arena
+    const newLeft = parser.arena.allocator().create(ast.Expr) catch unreachable;
+    newLeft.* = left.*;
+
     return .{
         .binary = .{
-            .left = left,
+            .left = newLeft,
             .op = ast.BinaryOperator.fromToken(token),
             .right = right,
             .token = token,
@@ -54,6 +58,7 @@ fn parseBinaryOp(ti: *const TokenInfo, parser: *Parser, left: *const ast.Expr, t
 
 // Precedences taken from pycopy-lib parser, mostly quantifying Python's expressions docs precedence order
 pub const token_infos = std.StaticStringMap(TokenInfo).initComptime(.{
+    .{ @tagName(TokenType.NEWLINE), .{ .lbp = 0, .nbp = 0 } },
     .{ @tagName(TokenType.NAME), .{ .lbp = 0, .nbp = 0, .prefix = parseName } },
     .{ @tagName(TokenType.NUMBER), .{ .lbp = 0, .nbp = 0, .prefix = parseNumber } },
     .{ @tagName(TokenType.TILDE), .{ .lbp = 0, .nbp = 130, .prefix = parseUnaryOp } },

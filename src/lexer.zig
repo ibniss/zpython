@@ -47,7 +47,6 @@ pub const Lexer = struct {
         if (self.read_position >= self.input.len) {
             self.ch = 0;
         } else {
-            // TODO: this might not work for utf-8 and only ascii?
             self.ch = self.input[self.read_position];
         }
 
@@ -213,6 +212,7 @@ pub const Lexer = struct {
             ';' => .{ .type = .SEMI, .literal = chSlice },
             0 => {
                 self.done = true;
+
                 try self.tokens_stack.append(.{ .type = .ENDMARKER, .literal = chSlice, .column = col, .line = row });
 
                 // Produce dedents for each leftover on indentation stack
@@ -220,6 +220,11 @@ pub const Lexer = struct {
                     if (indent > 0) {
                         try self.tokens_stack.append(.{ .type = .DEDENT, .literal = "", .line = self.row, .column = self.col });
                     }
+                }
+
+                // check if previous char was a newline if it wasn't, emit one anyway for simplicity
+                if (self.input[self.position - 1] != '\n') {
+                    try self.tokens_stack.append(.{ .type = .NEWLINE, .literal = "", .column = col, .line = row });
                 }
 
                 const foo = self.tokens_stack.pop();
@@ -323,6 +328,7 @@ test "next token no indent" {
         \\lexer.Token { .literal = "10", .type = "NUMBER", .line = 5, .column = 5 }
         \\lexer.Token { .literal = ">", .type = "GREATER", .line = 5, .column = 8 }
         \\lexer.Token { .literal = "5", .type = "NUMBER", .line = 5, .column = 10 }
+        \\lexer.Token { .literal = "", .type = "NEWLINE", .line = 5, .column = 11 }
         \\lexer.Token { .literal = "", .type = "ENDMARKER", .line = 5, .column = 11 }
         \\
     ));
@@ -373,6 +379,7 @@ test "with indents" {
         \\lexer.Token { .literal = "", .type = "NEWLINE", .line = 7, .column = 4 }
         \\lexer.Token { .literal = "return", .type = "NAME", .line = 7, .column = 4 }
         \\lexer.Token { .literal = "False", .type = "NAME", .line = 7, .column = 11 }
+        \\lexer.Token { .literal = "", .type = "NEWLINE", .line = 7, .column = 16 }
         \\lexer.Token { .literal = "", .type = "DEDENT", .line = 7, .column = 16 }
         \\lexer.Token { .literal = "", .type = "ENDMARKER", .line = 7, .column = 16 }
         \\
@@ -393,6 +400,7 @@ test "with two char tokens" {
         \\lexer.Token { .literal = "10", .type = "NUMBER", .line = 2, .column = 1 }
         \\lexer.Token { .literal = "!=", .type = "NOTEQUAL", .line = 2, .column = 4 }
         \\lexer.Token { .literal = "9", .type = "NUMBER", .line = 2, .column = 7 }
+        \\lexer.Token { .literal = "", .type = "NEWLINE", .line = 2, .column = 8 }
         \\lexer.Token { .literal = "", .type = "ENDMARKER", .line = 2, .column = 8 }
         \\
     ));
