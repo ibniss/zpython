@@ -18,7 +18,7 @@ pub const Parser = struct {
         const curr = try lexer.nextToken();
 
         const parser: Parser = .{
-            // use an arena to clear at once
+            // used for AST allocations
             .arena = std.heap.ArenaAllocator.init(allocator),
             .lexer = lexer,
             .cur_token = curr.?,
@@ -27,7 +27,7 @@ pub const Parser = struct {
         return parser;
     }
 
-    pub fn deinit(self: *Parser) void {
+    pub fn deinit(self: *const Parser) void {
         self.arena.deinit();
     }
 
@@ -93,8 +93,9 @@ pub const Parser = struct {
     }
 
     fn getTokenInfo(self: *Parser, token: Token) TokenInfo {
+        _ = self;
         // SKIP FOR NAME - check if there's a direct match on the token type name
-        if (!self.check(.NAME)) {
+        if (token.type != .NAME) {
             if (token_infos.get(@tagName(token.type))) |info| {
                 return info;
             }
@@ -177,7 +178,7 @@ pub const Parser = struct {
 
         if (self.match(.EQUAL)) {
             const value = self.parseExpression(0);
-            return .{ .assign = .{ .value = value, .target = name } };
+            return .{ .assign = .{ .value = value.?, .target = name } };
         }
 
         // no other forms matched so it's a standalone expression
@@ -213,13 +214,14 @@ pub const Parser = struct {
         return &statements;
     }
 
+    /// Returns an owned module
+    /// Caller is responsible for freeing the module memory
     pub fn parseProgram(self: *Parser) !ast.Module {
-        var module = ast.Module.init(self.arena.allocator());
+        var module = ast.Module.init(&self.arena);
 
         while (!self.check(.ENDMARKER)) {
             const statements = self.parseStatement();
             if (statements) |stmts| {
-                // defer stmts.deinit();
                 try module.body.appendSlice(stmts.items);
             }
         }
@@ -233,18 +235,19 @@ const Snap = @import("./snaptest.zig").Snap;
 const snap = Snap.snap;
 
 // util to perform snapshot testing on a given input
-fn checkParserOutput(input: []const u8, want: Snap) !void {
-    var lexer = try Lexer.init(t.allocator, input);
-    defer lexer.deinit();
-    var parser = try Parser.init(t.allocator, &lexer);
-    defer parser.deinit();
-
-    const module = try parser.parseProgram();
-    defer module.deinit();
-
+fn checkParserOutput(module: ast.Module, want: Snap) !void {
     const result = try std.fmt.allocPrint(t.allocator, "{s}", .{module});
     defer t.allocator.free(result);
     try want.diff(result);
+}
+
+fn checkStringified(module: ast.Module, want: Snap) !void {
+    var stringified = std.ArrayList(u8).init(t.allocator);
+    defer stringified.deinit();
+    module.stringify(stringified.writer());
+    const asSlice = try stringified.toOwnedSlice();
+    defer t.allocator.free(asSlice);
+    try want.diff(asSlice);
 }
 
 // test "can parse statements" {
@@ -272,7 +275,14 @@ test "can parse unary expressions" {
         \\~9
     ;
 
-    try checkParserOutput(input, snap(@src(),
+    var lexer = try Lexer.init(t.allocator, input);
+    defer lexer.deinit();
+    var parser = try Parser.init(t.allocator, &lexer);
+    defer parser.deinit();
+
+    const module = try parser.parseProgram();
+
+    try checkParserOutput(module, snap(@src(),
         \\Module(
         \\  body=[
         \\    Expr(value=UnaryOp(op=USub(), operand=Constant(value="5"))),
@@ -280,11 +290,14 @@ test "can parse unary expressions" {
         \\  ]
         \\)
     ));
+
+    try checkStringified(module, snap(@src(),
+        \\(-5)
+        \\(~9)
+    ));
 }
 
 test "can parse infix expressions" {
-    // TODO: something is wrong with advancing tokens
-    // TODO: checkout the python copy and trace through it how they handle token advancing
     const input =
         \\5 + 5
         \\5 - 5
@@ -294,7 +307,14 @@ test "can parse infix expressions" {
         \\5 % 5
     ;
 
-    try checkParserOutput(input, snap(@src(),
+    var lexer = try Lexer.init(t.allocator, input);
+    defer lexer.deinit();
+    var parser = try Parser.init(t.allocator, &lexer);
+    defer parser.deinit();
+
+    const module = try parser.parseProgram();
+
+    try checkParserOutput(module, snap(@src(),
         \\Module(
         \\  body=[
         \\    Expr(value=BinOp(left=Constant(value="5"), op=Add(), right=Constant(value="5"))),
@@ -305,5 +325,45 @@ test "can parse infix expressions" {
         \\    Expr(value=BinOp(left=Constant(value="5"), op=Mod(), right=Constant(value="5"))),
         \\  ]
         \\)
+    ));
+
+    try checkStringified(module, snap(@src(),
+        \\(5 + 5)
+        \\(5 - 5)
+        \\(5 * 5)
+        \\(5 / 5)
+        \\(5 // 5)
+        \\(5 % 5)
+    ));
+}
+
+test "can handle infix precedence" {
+    const input =
+        \\-a * b
+        \\a+b+c
+        \\a+b-c
+        \\a*b*c
+        \\a*b/c
+        \\a+b/c
+        \\a+b*c+d/e-f
+        \\5 > 4 == 3 < 4
+        \\5 < 4 != 3 > 4
+        \\3 +4*5 == 3*1 + 4*5
+    ;
+
+    var lexer = try Lexer.init(t.allocator, input);
+    defer lexer.deinit();
+    var parser = try Parser.init(t.allocator, &lexer);
+    defer parser.deinit();
+
+    const module = try parser.parseProgram();
+
+    try checkStringified(module, snap(@src(),
+        \\(5 + 5)
+        \\(5 - 5)
+        \\(5 * 5)
+        \\(5 / 5)
+        \\(5 // 5)
+        \\(5 % 5)
     ));
 }

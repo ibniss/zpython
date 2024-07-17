@@ -46,11 +46,48 @@ fn parseBinaryOp(ti: *const TokenInfo, parser: *Parser, left: *const ast.Expr, t
     const newLeft = parser.arena.allocator().create(ast.Expr) catch unreachable;
     newLeft.* = left.*;
 
+    // it's a binary op
+    if (ast.BinaryOperator.fromToken(token)) |bop| {
+        return .{
+            .binary = .{
+                .left = newLeft,
+                .op = bop,
+                .right = right,
+                .token = token,
+            },
+        };
+    }
+
+    // it's a comparison op
+    if (ast.ComparisonOperator.fromToken(token)) |cop| {
+        return .{
+            .compare = .{
+                .left = newLeft,
+                // TODO: support lists and appending
+                .ops = &[_]ast.ComparisonOperator{cop},
+                .comparators = &[_]ast.Expr{right},
+                .token = token,
+            },
+        };
+    }
+
+    std.debug.panic("Unsupported infix operator: {any}\n", .{token});
+}
+
+fn parseComparisonOp(ti: *const TokenInfo, parser: *Parser, left: *const ast.Expr, token: Token) ast.Expr {
+    const right = parser.parseExpression(ti.lbp) orelse @panic("Could not parse right of binary op");
+
+    // Important: create new pointer rather than reuse the same one as passed
+    // deallocation is handled by the arena
+    const newLeft = parser.arena.allocator().create(ast.Expr) catch unreachable;
+    newLeft.* = left.*;
+
     return .{
-        .binary = .{
+        .compare = .{
             .left = newLeft,
-            .op = ast.BinaryOperator.fromToken(token),
-            .right = right,
+            // TODO: support lists
+            .ops = &[_]ast.ComparisonOperator{ast.ComparisonOperator.fromToken(token)},
+            .comparators = &[_]ast.Expr{right},
             .token = token,
         },
     };
@@ -81,6 +118,12 @@ pub const token_infos = std.StaticStringMap(TokenInfo).initComptime(.{
     .{ @tagName(TokenType.EQEQUAL), .{
         .lbp = 60,
         .nbp = 0,
+        .infix = parseBinaryOp,
+    } },
+    .{ @tagName(TokenType.NOTEQUAL), .{
+        .lbp = 60,
+        .nbp = 0,
+        .infix = parseBinaryOp,
     } },
     .{ @tagName(TokenType.PLUS), .{
         .lbp = 110,
