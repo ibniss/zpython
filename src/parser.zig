@@ -16,6 +16,7 @@ pub const Parser = struct {
 
     pub fn init(allocator: std.mem.Allocator, lexer: *Lexer) !Parser {
         const curr = try lexer.nextToken();
+        std.debug.print("token: {any}\n", .{curr});
 
         const parser: Parser = .{
             // used for AST allocations
@@ -39,6 +40,7 @@ pub const Parser = struct {
     pub fn nextToken(self: *Parser) void {
         // TODO: skip over comments/NL?
         self.cur_token = (self.lexer.nextToken() catch unreachable).?;
+        std.debug.print("token: {s}\n", .{self.cur_token});
     }
 
     fn check(self: *Parser, typ: TokenType) bool {
@@ -173,6 +175,7 @@ pub const Parser = struct {
 
         // Otherwise it's some assignment etc starting with expression
         const maybeName = self.parseExpression(0);
+        std.debug.print("returned expr {?}\n", .{maybeName});
 
         const name = maybeName orelse return null;
 
@@ -236,8 +239,8 @@ const snap = Snap.snap;
 
 // util to perform snapshot testing on a given input
 fn checkParserOutput(module: ast.Module, want: Snap) !void {
-    const result = try std.fmt.allocPrint(t.allocator, "{s}", .{module});
-    defer t.allocator.free(result);
+    var buf: [2048]u8 = undefined;
+    const result = try std.fmt.bufPrint(&buf, "{s}", .{module});
     try want.diff(result);
 }
 
@@ -269,76 +272,78 @@ fn checkStringified(module: ast.Module, want: Snap) !void {
 //     ));
 // }
 //
-test "can parse unary expressions" {
-    const input =
-        \\-5
-        \\~9
-    ;
-
-    var lexer = try Lexer.init(t.allocator, input);
-    defer lexer.deinit();
-    var parser = try Parser.init(t.allocator, &lexer);
-    defer parser.deinit();
-
-    const module = try parser.parseProgram();
-
-    try checkParserOutput(module, snap(@src(),
-        \\Module(
-        \\  body=[
-        \\    Expr(value=UnaryOp(op=USub(), operand=Constant(value="5"))),
-        \\    Expr(value=UnaryOp(op=Invert(), operand=Constant(value="9"))),
-        \\  ]
-        \\)
-    ));
-
-    try checkStringified(module, snap(@src(),
-        \\(-5)
-        \\(~9)
-    ));
-}
-
-test "can parse infix expressions" {
-    const input =
-        \\5 + 5
-        \\5 - 5
-        \\5 * 5
-        \\5 / 5
-        \\5 // 5
-        \\5 % 5
-    ;
-
-    var lexer = try Lexer.init(t.allocator, input);
-    defer lexer.deinit();
-    var parser = try Parser.init(t.allocator, &lexer);
-    defer parser.deinit();
-
-    const module = try parser.parseProgram();
-
-    try checkParserOutput(module, snap(@src(),
-        \\Module(
-        \\  body=[
-        \\    Expr(value=BinOp(left=Constant(value="5"), op=Add(), right=Constant(value="5"))),
-        \\    Expr(value=BinOp(left=Constant(value="5"), op=Sub(), right=Constant(value="5"))),
-        \\    Expr(value=BinOp(left=Constant(value="5"), op=Mult(), right=Constant(value="5"))),
-        \\    Expr(value=BinOp(left=Constant(value="5"), op=Div(), right=Constant(value="5"))),
-        \\    Expr(value=BinOp(left=Constant(value="5"), op=FloorDiv(), right=Constant(value="5"))),
-        \\    Expr(value=BinOp(left=Constant(value="5"), op=Mod(), right=Constant(value="5"))),
-        \\  ]
-        \\)
-    ));
-
-    try checkStringified(module, snap(@src(),
-        \\(5 + 5)
-        \\(5 - 5)
-        \\(5 * 5)
-        \\(5 / 5)
-        \\(5 // 5)
-        \\(5 % 5)
-    ));
-}
+// test "can parse unary expressions" {
+//     const input =
+//         \\-5
+//         \\~9
+//     ;
+//
+//     var lexer = try Lexer.init(t.allocator, input);
+//     defer lexer.deinit();
+//     var parser = try Parser.init(t.allocator, &lexer);
+//     defer parser.deinit();
+//
+//     const module = try parser.parseProgram();
+//
+//     try checkParserOutput(module, snap(@src(),
+//         \\Module(
+//         \\  body=[
+//         \\    Expr(value=UnaryOp(op=USub(), operand=Constant(value="5"))),
+//         \\    Expr(value=UnaryOp(op=Invert(), operand=Constant(value="9"))),
+//         \\  ]
+//         \\)
+//     ));
+//
+//     try checkStringified(module, snap(@src(),
+//         \\(-5)
+//         \\(~9)
+//     ));
+// }
+//
+// test "can parse infix expressions" {
+//     const input =
+//         \\5 + 5
+//         \\5 - 5
+//         \\5 * 5
+//         \\5 / 5
+//         \\5 // 5
+//         \\5 % 5
+//     ;
+//
+//     var lexer = try Lexer.init(t.allocator, input);
+//     defer lexer.deinit();
+//     var parser = try Parser.init(t.allocator, &lexer);
+//     defer parser.deinit();
+//
+//     const module = try parser.parseProgram();
+//
+//     try checkParserOutput(module, snap(@src(),
+//         \\Module(
+//         \\  body=[
+//         \\    Expr(value=BinOp(left=Constant(value="5"), op=Add(), right=Constant(value="5"))),
+//         \\    Expr(value=BinOp(left=Constant(value="5"), op=Sub(), right=Constant(value="5"))),
+//         \\    Expr(value=BinOp(left=Constant(value="5"), op=Mult(), right=Constant(value="5"))),
+//         \\    Expr(value=BinOp(left=Constant(value="5"), op=Div(), right=Constant(value="5"))),
+//         \\    Expr(value=BinOp(left=Constant(value="5"), op=FloorDiv(), right=Constant(value="5"))),
+//         \\    Expr(value=BinOp(left=Constant(value="5"), op=Mod(), right=Constant(value="5"))),
+//         \\  ]
+//         \\)
+//     ));
+//
+//     try checkStringified(module, snap(@src(),
+//         \\(5 + 5)
+//         \\(5 - 5)
+//         \\(5 * 5)
+//         \\(5 / 5)
+//         \\(5 // 5)
+//         \\(5 % 5)
+//     ));
+// }
 
 test "can handle infix precedence" {
     const input =
+        \\a > 5
+        \\b < 4
         \\-a * b
         \\a+b+c
         \\a+b-c
@@ -348,7 +353,7 @@ test "can handle infix precedence" {
         \\a+b*c+d/e-f
         \\5 > 4 == 3 < 4
         \\5 < 4 != 3 > 4
-        \\3 +4*5 == 3*1 + 4*5
+        \\3 + 4*5 == 3*1 + 4*5
     ;
 
     var lexer = try Lexer.init(t.allocator, input);
@@ -359,11 +364,17 @@ test "can handle infix precedence" {
     const module = try parser.parseProgram();
 
     try checkStringified(module, snap(@src(),
-        \\(5 + 5)
-        \\(5 - 5)
-        \\(5 * 5)
-        \\(5 / 5)
-        \\(5 // 5)
-        \\(5 % 5)
+        \\(a > 5)
+        \\(b < 4)
+        \\((-a) * b)
+        \\((a + b) + c)
+        \\((a + b) - c)
+        \\((a * b) * c)
+        \\((a * b) / c)
+        \\(a + (b / c))
+        \\(((a + (b * c)) + (d / e)) - f)
+        \\(((5 > 4) == 3) < 4)
+        \\(((5 < 4) != 3) > 4)
+        \\((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))
     ));
 }

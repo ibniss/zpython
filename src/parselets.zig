@@ -60,12 +60,17 @@ fn parseBinaryOp(ti: *const TokenInfo, parser: *Parser, left: *const ast.Expr, t
 
     // it's a comparison op
     if (ast.ComparisonOperator.fromToken(token)) |cop| {
+        // the comparator wants a slice which is a pointer, so we need to allocate the backing array
+        // TODO: arraylist for more? or extend manually somehow
+        const comparators = parser.arena.allocator().alloc(*const ast.Expr, 1) catch unreachable;
+        comparators[0] = right;
+
         return .{
             .compare = .{
                 .left = newLeft,
                 // TODO: support lists and appending
                 .ops = &[_]ast.ComparisonOperator{cop},
-                .comparators = &[_]ast.Expr{right},
+                .comparators = comparators,
                 .token = token,
             },
         };
@@ -76,18 +81,28 @@ fn parseBinaryOp(ti: *const TokenInfo, parser: *Parser, left: *const ast.Expr, t
 
 fn parseComparisonOp(ti: *const TokenInfo, parser: *Parser, left: *const ast.Expr, token: Token) ast.Expr {
     const right = parser.parseExpression(ti.lbp) orelse @panic("Could not parse right of binary op");
+    std.debug.print("comparison right {s}\n", .{right});
 
     // Important: create new pointer rather than reuse the same one as passed
     // deallocation is handled by the arena
     const newLeft = parser.arena.allocator().create(ast.Expr) catch unreachable;
     newLeft.* = left.*;
 
+    const comparators = parser.arena.allocator().alloc(*const ast.Expr, 1) catch unreachable;
+    comparators[0] = right;
+
+    const operator = ast.ComparisonOperator.fromToken(token) orelse unreachable;
+
+    std.debug.print("comparison operator {s}\n", .{operator});
+    const operators = parser.arena.allocator().alloc(ast.ComparisonOperator, 1) catch unreachable;
+    operators[0] = operator;
+
     return .{
         .compare = .{
             .left = newLeft,
             // TODO: support lists
-            .ops = &[_]ast.ComparisonOperator{ast.ComparisonOperator.fromToken(token)},
-            .comparators = &[_]ast.Expr{right},
+            .ops = operators,
+            .comparators = comparators,
             .token = token,
         },
     };
@@ -110,20 +125,22 @@ pub const token_infos = std.StaticStringMap(TokenInfo).initComptime(.{
     .{ @tagName(TokenType.LESS), .{
         .lbp = 60,
         .nbp = 0,
+        .infix = parseComparisonOp,
     } },
     .{ @tagName(TokenType.GREATER), .{
         .lbp = 60,
         .nbp = 0,
+        .infix = parseComparisonOp,
     } },
     .{ @tagName(TokenType.EQEQUAL), .{
         .lbp = 60,
         .nbp = 0,
-        .infix = parseBinaryOp,
+        .infix = parseComparisonOp,
     } },
     .{ @tagName(TokenType.NOTEQUAL), .{
         .lbp = 60,
         .nbp = 0,
-        .infix = parseBinaryOp,
+        .infix = parseComparisonOp,
     } },
     .{ @tagName(TokenType.PLUS), .{
         .lbp = 110,
@@ -136,13 +153,11 @@ pub const token_infos = std.StaticStringMap(TokenInfo).initComptime(.{
         .prefix = parseUnaryOp,
         .infix = parseBinaryOp,
     } },
-    .{
-        @tagName(TokenType.STAR), .{
-            .lbp = 120,
-            .nbp = 159,
-            .infix = parseBinaryOp,
-        },
-    },
+    .{ @tagName(TokenType.STAR), .{
+        .lbp = 120,
+        .nbp = 159,
+        .infix = parseBinaryOp,
+    } },
     .{ @tagName(TokenType.SLASH), .{
         .lbp = 120,
         .nbp = 0,

@@ -194,16 +194,19 @@ pub const Compare = struct {
 
     pub fn format(self: Compare, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         // TODO print properly
-        try writer.print("Compare(left={s}, ops={s}, comparators={s})", .{ self.left, self.ops, self.comparators });
+        try writer.print("Compare(left={s}, ops={s}, comparators={s})", .{ self.left, self.ops[0], self.comparators[0] });
     }
 
     pub fn stringify(self: Compare, writer: anytype) void {
         _ = writer.write("(") catch unreachable;
         self.left.stringify(writer);
-        _ = writer.write(" ") catch unreachable;
-        self.ops.stringify(writer);
-        _ = writer.write(" ") catch unreachable;
-        self.comparators.stringify(writer);
+
+        for (self.ops, self.comparators) |op, comp| {
+            _ = writer.write(" ") catch unreachable;
+            op.stringify(writer);
+            _ = writer.write(" ") catch unreachable;
+            comp.stringify(writer);
+        }
         _ = writer.write(")") catch unreachable;
     }
 };
@@ -233,7 +236,10 @@ pub const ComparisonOperator = union(enum) {
 
     pub fn stringify(self: ComparisonOperator, writer: anytype) void {
         _ = switch (self) {
-            inline else => |s| writer.write(s.token.literal) catch unreachable,
+            inline else => |s| {
+                std.debug.print("{s}\n", .{s.token});
+                _ = writer.write(s.token.literal) catch unreachable;
+            },
         };
     }
 };
