@@ -19,12 +19,32 @@ pub const TokenInfo = struct {
 };
 
 fn parseName(_: *const TokenInfo, _: *Parser, token: Token) ast.Expr {
+    // TODO: should have ctx.Load() etc
     return .{ .name = .{ .token = token, .value = token.literal } };
+}
+
+fn parseConstant(_: *const TokenInfo, _: *Parser, token: Token) ast.Expr {
+    // TODO: value should be PyObject - switch None, True, False
+    return .{ .constant = .{ .token = token, .value = token.literal } };
 }
 
 fn parseNumber(_: *const TokenInfo, parser: *Parser, token: Token) ast.Expr {
     _ = parser;
     return .{ .constant = .{ .token = token, .value = token.literal } };
+}
+
+fn parseGroupedExpression(_: *const TokenInfo, parser: *Parser, _: Token) ast.Expr {
+    // TODO: if empty this is empty tuple
+
+    // start parsing again, restarting precedence
+    const exp = parser.parseExpression(0);
+
+    // after parsing we should be on RPAR
+    parser.expect(.RPAR);
+
+    // TODO: generators?
+
+    return exp.?.*;
 }
 
 fn parseUnaryOp(ti: *const TokenInfo, parser: *Parser, token: Token) ast.Expr {
@@ -96,7 +116,11 @@ fn parseBinaryOp(ti: *const TokenInfo, parser: *Parser, left: *ast.Expr, token: 
 // Precedences taken from pycopy-lib parser, mostly quantifying Python's expressions docs precedence order
 pub const token_infos = std.StaticStringMap(TokenInfo).initComptime(.{
     .{ @tagName(TokenType.NEWLINE), .{ .lbp = 0, .nbp = 0 } },
+    .{ @tagName(TokenType.RPAR), .{ .lbp = 0, .nbp = 0 } },
     .{ @tagName(TokenType.NAME), .{ .lbp = 0, .nbp = 0, .prefix = parseName } },
+    .{ "None", .{ .lbp = 0, .nbp = 0, .prefix = parseConstant } },
+    .{ "True", .{ .lbp = 0, .nbp = 0, .prefix = parseConstant } },
+    .{ "False", .{ .lbp = 0, .nbp = 0, .prefix = parseConstant } },
     .{ @tagName(TokenType.NUMBER), .{ .lbp = 0, .nbp = 0, .prefix = parseNumber } },
     .{ @tagName(TokenType.TILDE), .{ .lbp = 0, .nbp = 130, .prefix = parseUnaryOp } },
     .{ @tagName(TokenType.EQUAL), .{
@@ -157,6 +181,11 @@ pub const token_infos = std.StaticStringMap(TokenInfo).initComptime(.{
         .lbp = 120,
         .nbp = 0,
         .infix = parseBinaryOp,
+    } },
+    .{ @tagName(TokenType.LPAR), .{
+        .lbp = 160,
+        .nbp = 0,
+        .prefix = parseGroupedExpression,
     } },
     .{ @tagName(TokenType.STRING), .{
         .lbp = 200,
