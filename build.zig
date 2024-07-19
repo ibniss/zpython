@@ -41,6 +41,16 @@ pub fn build(b: *std.Build) void {
     // step when running `zig build`).
     b.installArtifact(exe);
 
+    // SAME AS EXE but for checking
+    const lib_check = b.addStaticLibrary(.{
+        .name = "zpython",
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const check = b.step("check", "Check if zpython compiles");
+    check.dependOn(&lib_check.step);
+
     // This *creates* a Run step in the build graph, to be executed when another
     // step is evaluated that depends on it. The next line below will establish
     // such a dependency.

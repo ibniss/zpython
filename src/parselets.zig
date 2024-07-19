@@ -11,7 +11,7 @@ const std = @import("std");
 pub const TokenInfo = struct {
     const Self = @This();
     prefix: ?*const fn (info: *const Self, parser: *Parser, token: Token) ast.Expr = null,
-    infix: ?*const fn (info: *const Self, parser: *Parser, left: *const ast.Expr, token: Token) ast.Expr = null,
+    infix: ?*const fn (info: *const Self, parser: *Parser, left: *ast.Expr, token: Token) ast.Expr = null,
     // left-binding power ('left arg available', i.e. infix/postfix)
     lbp: u8,
     // null-binding power (i.e. prefix)
@@ -38,8 +38,10 @@ fn parseUnaryOp(ti: *const TokenInfo, parser: *Parser, token: Token) ast.Expr {
     };
 }
 
-fn parseBinaryOp(ti: *const TokenInfo, parser: *Parser, left: *const ast.Expr, token: Token) ast.Expr {
+fn parseBinaryOp(ti: *const TokenInfo, parser: *Parser, left: *ast.Expr, token: Token) ast.Expr {
     const right = parser.parseExpression(ti.lbp) orelse @panic("Could not parse right of binary op");
+
+    // TODO: if left is BoolOp, join as right
 
     // Important: create new pointer rather than reuse the same one as passed
     // deallocation is handled by the arena
@@ -60,52 +62,35 @@ fn parseBinaryOp(ti: *const TokenInfo, parser: *Parser, left: *const ast.Expr, t
 
     // it's a comparison op
     if (ast.ComparisonOperator.fromToken(token)) |cop| {
-        // the comparator wants a slice which is a pointer, so we need to allocate the backing array
-        // TODO: arraylist for more? or extend manually somehow
-        const comparators = parser.arena.allocator().alloc(*const ast.Expr, 1) catch unreachable;
-        comparators[0] = right;
-
-        return .{
-            .compare = .{
-                .left = newLeft,
-                // TODO: support lists and appending
-                .ops = &[_]ast.ComparisonOperator{cop},
-                .comparators = comparators,
-                .token = token,
+        switch (left.*) {
+            // if the left expr is also a comparison, instead append
+            .compare => |*left_compare| {
+                std.debug.print("Left if compare {s}\n", .{left_compare});
+                left_compare.ops.append(cop) catch unreachable;
+                left_compare.comparators.append(right) catch unreachable;
+                return left.*;
             },
-        };
+            else => {
+                std.debug.print("left is not compare {s}\n", .{left});
+                var comparators = std.ArrayList(*const ast.Expr).init(parser.arena.allocator());
+                comparators.append(right) catch unreachable;
+
+                var operators = std.ArrayList(ast.ComparisonOperator).init(parser.arena.allocator());
+                operators.append(cop) catch unreachable;
+
+                return .{
+                    .compare = .{
+                        .left = newLeft,
+                        .ops = operators,
+                        .comparators = comparators,
+                        .token = token,
+                    },
+                };
+            },
+        }
     }
 
     std.debug.panic("Unsupported infix operator: {any}\n", .{token});
-}
-
-fn parseComparisonOp(ti: *const TokenInfo, parser: *Parser, left: *const ast.Expr, token: Token) ast.Expr {
-    const right = parser.parseExpression(ti.lbp) orelse @panic("Could not parse right of binary op");
-    std.debug.print("comparison right {s}\n", .{right});
-
-    // Important: create new pointer rather than reuse the same one as passed
-    // deallocation is handled by the arena
-    const newLeft = parser.arena.allocator().create(ast.Expr) catch unreachable;
-    newLeft.* = left.*;
-
-    const comparators = parser.arena.allocator().alloc(*const ast.Expr, 1) catch unreachable;
-    comparators[0] = right;
-
-    const operator = ast.ComparisonOperator.fromToken(token) orelse unreachable;
-
-    std.debug.print("comparison operator {s}\n", .{operator});
-    const operators = parser.arena.allocator().alloc(ast.ComparisonOperator, 1) catch unreachable;
-    operators[0] = operator;
-
-    return .{
-        .compare = .{
-            .left = newLeft,
-            // TODO: support lists
-            .ops = operators,
-            .comparators = comparators,
-            .token = token,
-        },
-    };
 }
 
 // Precedences taken from pycopy-lib parser, mostly quantifying Python's expressions docs precedence order
@@ -125,22 +110,22 @@ pub const token_infos = std.StaticStringMap(TokenInfo).initComptime(.{
     .{ @tagName(TokenType.LESS), .{
         .lbp = 60,
         .nbp = 0,
-        .infix = parseComparisonOp,
+        .infix = parseBinaryOp,
     } },
     .{ @tagName(TokenType.GREATER), .{
         .lbp = 60,
         .nbp = 0,
-        .infix = parseComparisonOp,
+        .infix = parseBinaryOp,
     } },
     .{ @tagName(TokenType.EQEQUAL), .{
         .lbp = 60,
         .nbp = 0,
-        .infix = parseComparisonOp,
+        .infix = parseBinaryOp,
     } },
     .{ @tagName(TokenType.NOTEQUAL), .{
         .lbp = 60,
         .nbp = 0,
-        .infix = parseComparisonOp,
+        .infix = parseBinaryOp,
     } },
     .{ @tagName(TokenType.PLUS), .{
         .lbp = 110,

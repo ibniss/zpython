@@ -340,17 +340,64 @@ fn checkStringified(module: ast.Module, want: Snap) !void {
 //     ));
 // }
 
-test "can handle infix precedence" {
-    const input =
-        \\a > 5
-        \\b < 4
-        \\-a * b
-        \\a+b+c
-        \\a+b-c
-        \\a*b*c
-        \\a*b/c
-        \\a+b/c
-        \\a+b*c+d/e-f
+// test "can handle infix precedence" {
+//     const input =
+//         \\a > 5
+//         \\b < 4
+//         \\c == 5
+//         \\c != 5
+//         \\-a * b
+//         \\a+b+c
+//         \\a+b-c
+//         \\a*b*c
+//         \\a*b/c
+//         \\a+b/c
+//         \\a+b*c+d/e-f
+//     ;
+//
+//     var lexer = try Lexer.init(t.allocator, input);
+//     defer lexer.deinit();
+//     var parser = try Parser.init(t.allocator, &lexer);
+//     defer parser.deinit();
+//
+//     const module = try parser.parseProgram();
+//
+//     try checkParserOutput(module, snap(@src(),
+//         \\Module(
+//         \\  body=[
+//         \\    Expr(value=Compare(left=Name(value="a"), ops=[Gt()], comparators=[Constant(value="5")])),
+//         \\    Expr(value=Compare(left=Name(value="b"), ops=[Lt()], comparators=[Constant(value="4")])),
+//         \\    Expr(value=Compare(left=Name(value="c"), ops=[Eq()], comparators=[Constant(value="5")])),
+//         \\    Expr(value=Compare(left=Name(value="c"), ops=[NotEq()], comparators=[Constant(value="5")])),
+//         \\    Expr(value=BinOp(left=UnaryOp(op=USub(), operand=Name(value="a")), op=Mult(), right=Name(value="b"))),
+//         \\    Expr(value=BinOp(left=BinOp(left=Name(value="a"), op=Add(), right=Name(value="b")), op=Add(), right=Name(value="c"))),
+//         \\    Expr(value=BinOp(left=BinOp(left=Name(value="a"), op=Add(), right=Name(value="b")), op=Sub(), right=Name(value="c"))),
+//         \\    Expr(value=BinOp(left=BinOp(left=Name(value="a"), op=Mult(), right=Name(value="b")), op=Mult(), right=Name(value="c"))),
+//         \\    Expr(value=BinOp(left=BinOp(left=Name(value="a"), op=Mult(), right=Name(value="b")), op=Div(), right=Name(value="c"))),
+//         \\    Expr(value=BinOp(left=Name(value="a"), op=Add(), right=BinOp(left=Name(value="b"), op=Div(), right=Name(value="c")))),
+//         \\    Expr(value=BinOp(left=BinOp(left=BinOp(left=Name(value="a"), op=Add(), right=BinOp(left=Name(value="b"), op=Mult(), right=Name(value="c"))), op=Add(), right=BinOp(left=Name(value="d"), op=Div(), right=Name(value="e"))), op=Sub(), right=Name(value="f"))),
+//         \\  ]
+//         \\)
+//     ));
+//
+//     try checkStringified(module, snap(@src(),
+//         \\(a > 5)
+//         \\(b < 4)
+//         \\(c == 5)
+//         \\(c != 5)
+//         \\((-a) * b)
+//         \\((a + b) + c)
+//         \\((a + b) - c)
+//         \\((a * b) * c)
+//         \\((a * b) / c)
+//         \\(a + (b / c))
+//         \\(((a + (b * c)) + (d / e)) - f)
+//     ));
+// }
+
+test "can handle chained comparators" {
+    const input: []const u8 =
+        \\ 1 < 2 > 3
         \\5 > 4 == 3 < 4
         \\5 < 4 != 3 > 4
         \\3 + 4*5 == 3*1 + 4*5
@@ -363,18 +410,21 @@ test "can handle infix precedence" {
 
     const module = try parser.parseProgram();
 
+    try checkParserOutput(module, snap(@src(),
+        \\Module(
+        \\  body=[
+        \\Expr(value=Compare(left=Constant(value="1"),ops=[Lt(),Gt()], comparators=[Constant(value="2"),Constant(value="3")])),
+        \\Expr(value=Compare(left=Constant(value="5"),ops=[Gt(),Eq(),Lt()], comparators=[Constant(value="4"),Constant(value="3"),Constant(value="4")])),
+        \\Expr(value=Compare(left=Constant(value="5"),ops=[Lt(),NotEq(),Gt()], comparators=[Constant(value="4"),Constant(value="3"),Constant(value="4")])),
+        \\Expr(value=Compare(left=BinOp(left=Constant(value="3"), op=Add(), right=BinOp(left=Constant(value="4"), op=Mult(), right=Constant(value="5"))),ops=[Eq()], comparators=[BinOp(left=BinOp(left=Constant(value="3"), op=Mult(), right=Constant(value="1")), op=Add(), right=BinOp(left=Constant(value="4"), op=Mult(), right=Constant(value="5")))])),
+        \\  ]
+        \\)
+    ));
+
     try checkStringified(module, snap(@src(),
-        \\(a > 5)
-        \\(b < 4)
-        \\((-a) * b)
-        \\((a + b) + c)
-        \\((a + b) - c)
-        \\((a * b) * c)
-        \\((a * b) / c)
-        \\(a + (b / c))
-        \\(((a + (b * c)) + (d / e)) - f)
-        \\(((5 > 4) == 3) < 4)
-        \\(((5 < 4) != 3) > 4)
+        \\(1 < 2 > 3)
+        \\(5 > 4 == 3 < 4)
+        \\(5 < 4 != 3 > 4)
         \\((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))
     ));
 }

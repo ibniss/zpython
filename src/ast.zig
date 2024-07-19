@@ -17,7 +17,7 @@ pub const Module = struct {
         try writer.print("Module(\n  body=[\n", .{});
 
         for (self.body.items) |stmt| {
-            try writer.print("    {s},\n", .{stmt});
+            try writer.print("{s},\n", .{stmt});
         }
 
         try writer.print("  ]\n)", .{});
@@ -189,19 +189,38 @@ pub const BinaryOp = struct {
 pub const Compare = struct {
     token: Token,
     left: *const Expr,
-    ops: []const ComparisonOperator,
-    comparators: []const *const Expr,
+    ops: std.ArrayList(ComparisonOperator),
+    comparators: std.ArrayList(*const Expr),
 
     pub fn format(self: Compare, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        // TODO print properly
-        try writer.print("Compare(left={s}, ops={s}, comparators={s})", .{ self.left, self.ops[0], self.comparators[0] });
+        try writer.print("Compare(left={s},ops=[", .{self.left});
+
+        for (self.ops.items, 0..) |op, idx| {
+            try writer.print("{s}", .{op});
+
+            if (idx != self.ops.items.len - 1) {
+                try writer.print(",", .{});
+            }
+        }
+
+        try writer.print("], comparators=[", .{});
+
+        for (self.comparators.items, 0..) |comp, idx| {
+            try writer.print("{s}", .{comp});
+
+            if (idx != self.comparators.items.len - 1) {
+                try writer.print(",", .{});
+            }
+        }
+
+        try writer.print("])", .{});
     }
 
     pub fn stringify(self: Compare, writer: anytype) void {
         _ = writer.write("(") catch unreachable;
         self.left.stringify(writer);
 
-        for (self.ops, self.comparators) |op, comp| {
+        for (self.ops.items, self.comparators.items) |op, comp| {
             _ = writer.write(" ") catch unreachable;
             op.stringify(writer);
             _ = writer.write(" ") catch unreachable;
