@@ -40,7 +40,7 @@ fn parseGroupedExpression(_: *const TokenInfo, parser: *Parser, _: Token) ast.Ex
     const exp = parser.parseExpression(0);
 
     // after parsing we should be on RPAR
-    parser.expect(.RPAR);
+    parser.expect(TokenType.RPAR);
 
     // TODO: generators?
 

@@ -52,9 +52,11 @@ pub const Expr = union(enum) {
         }
     }
 };
+
 pub const Stmt = union(enum) {
     assign: Assign,
     ret: Return,
+    if_stmt: IfStmt,
 
     // expression statemens - standalone expression
     expr: struct {
@@ -81,6 +83,41 @@ pub const Stmt = union(enum) {
         switch (self) {
             inline else => |s| s.stringify(writer),
         }
+    }
+};
+
+pub const IfStmt = struct {
+    test_expr: *const Expr,
+    body: std.ArrayList(Stmt),
+    or_else: std.ArrayList(Stmt),
+
+    pub fn format(self: IfStmt, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("If(test={s}, body=[", .{self.test_expr});
+
+        for (self.body.items, 0..) |stmt, idx| {
+            if (idx != 0) {
+                try writer.print(",", .{});
+            }
+
+            try writer.print("{s}", .{stmt});
+        }
+
+        try writer.print("orelse=[", .{});
+
+        for (self.or_else.items, 0..) |stmt, idx| {
+            if (idx != 0) {
+                try writer.print(",", .{});
+            }
+
+            try writer.print("{s}", .{stmt});
+        }
+
+        try writer.print("])", .{});
+    }
+
+    pub fn stringify(self: IfStmt, writer: anytype) void {
+        _ = self;
+        _ = writer.write("if") catch unreachable;
     }
 };
 
