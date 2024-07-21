@@ -212,8 +212,9 @@ pub const Parser = struct {
             or_else.append(self.handleIf()) catch unreachable;
         } else if (self.match("else")) {
             self.expect(TokenType.COLON);
-            const else_block = self.parseBlock();
-            or_else.insertSlice(0, else_block.items) catch unreachable;
+            var else_block = self.parseBlock();
+            const else_block_slice = else_block.toOwnedSlice() catch unreachable;
+            or_else.appendSlice(else_block_slice) catch unreachable;
         }
 
         return ast.Stmt{
@@ -310,13 +311,19 @@ pub const Parser = struct {
     /// Caller is responsible for freeing the module memory
     pub fn parseProgram(self: *Parser) !ast.Module {
         var module = ast.Module.init(&self.arena);
+        std.debug.print("arena {any}\n", .{self.arena});
 
         while (!self.check(TokenType.ENDMARKER)) {
-            const statements = self.parseStatement();
-            if (statements) |stmts| {
-                try module.body.appendSlice(stmts.items);
+            var statements = self.parseStatement();
+            if (statements) |*stmts| {
+                const stmts_slice = try stmts.toOwnedSlice();
+                std.debug.print("got stmts {any}\n", .{stmts_slice});
+                try module.body.appendSlice(stmts_slice);
             }
         }
+
+        // transfer arena ownership
+        module.arena = self.arena;
 
         return module;
     }
@@ -342,250 +349,230 @@ fn checkStringified(module: ast.Module, want: Snap) !void {
     try want.diff(asSlice);
 }
 
-// test "can parse statements" {
-//     const input =
-//         \\x = 5
-//         \\y = 10
-//         \\foobar = 838383
-//         \\
-//     ;
-//     var lexer = try Lexer.init(t.allocator, input);
-//     defer lexer.deinit();
-//     var parser = try Parser.init(t.allocator, &lexer);
-//     defer parser.deinit();
-//
-//     const module = try parser.parseProgram();
-//
-//     try checkParserOutput(module, snap(@src(),
-//         \\Module(
-//         \\  body=[
-//         \\Assign(target=Name(value="x"), value=Constant(value="5")),
-//         \\Assign(target=Name(value="y"), value=Constant(value="10")),
-//         \\Assign(target=Name(value="foobar"), value=Constant(value="838383")),
-//         \\  ]
-//         \\)
-//     ));
-// }
-//
-// test "can parse name and constant expressions" {
-//     const input =
-//         \\foobar
-//         \\True
-//         \\False
-//         \\None
-//     ;
-//
-//     var lexer = try Lexer.init(t.allocator, input);
-//     defer lexer.deinit();
-//     var parser = try Parser.init(t.allocator, &lexer);
-//     defer parser.deinit();
-//
-//     const module = try parser.parseProgram();
-//
-//     try checkParserOutput(module, snap(@src(),
-//         \\Module(
-//         \\  body=[
-//         \\Expr(value=Name(value="foobar")),
-//         \\Expr(value=Constant(value="True")),
-//         \\Expr(value=Constant(value="False")),
-//         \\Expr(value=Constant(value="None")),
-//         \\  ]
-//         \\)
-//     ));
-// }
-//
-// test "can parse unary expressions" {
-//     const input =
-//         \\-5
-//         \\~9
-//     ;
-//
-//     var lexer = try Lexer.init(t.allocator, input);
-//     defer lexer.deinit();
-//     var parser = try Parser.init(t.allocator, &lexer);
-//     defer parser.deinit();
-//
-//     const module = try parser.parseProgram();
-//
-//     try checkParserOutput(module, snap(@src(),
-//         \\Module(
-//         \\  body=[
-//         \\Expr(value=UnaryOp(op=USub(), operand=Constant(value="5"))),
-//         \\Expr(value=UnaryOp(op=Invert(), operand=Constant(value="9"))),
-//         \\  ]
-//         \\)
-//     ));
-//
-//     try checkStringified(module, snap(@src(),
-//         \\(-5)
-//         \\(~9)
-//     ));
-// }
-//
-// test "can parse infix expressions" {
-//     const input =
-//         \\5 + 5
-//         \\5 - 5
-//         \\5 * 5
-//         \\5 / 5
-//         \\5 // 5
-//         \\5 % 5
-//     ;
-//
-//     var lexer = try Lexer.init(t.allocator, input);
-//     defer lexer.deinit();
-//     var parser = try Parser.init(t.allocator, &lexer);
-//     defer parser.deinit();
-//
-//     const module = try parser.parseProgram();
-//
-//     try checkParserOutput(module, snap(@src(),
-//         \\Module(
-//         \\  body=[
-//         \\Expr(value=BinOp(left=Constant(value="5"), op=Add(), right=Constant(value="5"))),
-//         \\Expr(value=BinOp(left=Constant(value="5"), op=Sub(), right=Constant(value="5"))),
-//         \\Expr(value=BinOp(left=Constant(value="5"), op=Mult(), right=Constant(value="5"))),
-//         \\Expr(value=BinOp(left=Constant(value="5"), op=Div(), right=Constant(value="5"))),
-//         \\Expr(value=BinOp(left=Constant(value="5"), op=FloorDiv(), right=Constant(value="5"))),
-//         \\Expr(value=BinOp(left=Constant(value="5"), op=Mod(), right=Constant(value="5"))),
-//         \\  ]
-//         \\)
-//     ));
-//
-//     try checkStringified(module, snap(@src(),
-//         \\(5 + 5)
-//         \\(5 - 5)
-//         \\(5 * 5)
-//         \\(5 / 5)
-//         \\(5 // 5)
-//         \\(5 % 5)
-//     ));
-// }
-//
-// test "can handle infix precedence" {
-//     const input =
-//         \\a > 5
-//         \\b < 4
-//         \\c == 5
-//         \\c != 5
-//         \\-a * b
-//         \\a+b+c
-//         \\a+b-c
-//         \\a*b*c
-//         \\a*b/c
-//         \\a+b/c
-//         \\a+b*c+d/e-f
-//     ;
-//
-//     var lexer = try Lexer.init(t.allocator, input);
-//     defer lexer.deinit();
-//     var parser = try Parser.init(t.allocator, &lexer);
-//     defer parser.deinit();
-//
-//     const module = try parser.parseProgram();
-//
-//     try checkParserOutput(module, snap(@src(),
-//         \\Module(
-//         \\  body=[
-//         \\Expr(value=Compare(left=Name(value="a"),ops=[Gt()], comparators=[Constant(value="5")])),
-//         \\Expr(value=Compare(left=Name(value="b"),ops=[Lt()], comparators=[Constant(value="4")])),
-//         \\Expr(value=Compare(left=Name(value="c"),ops=[Eq()], comparators=[Constant(value="5")])),
-//         \\Expr(value=Compare(left=Name(value="c"),ops=[NotEq()], comparators=[Constant(value="5")])),
-//         \\Expr(value=BinOp(left=UnaryOp(op=USub(), operand=Name(value="a")), op=Mult(), right=Name(value="b"))),
-//         \\Expr(value=BinOp(left=BinOp(left=Name(value="a"), op=Add(), right=Name(value="b")), op=Add(), right=Name(value="c"))),
-//         \\Expr(value=BinOp(left=BinOp(left=Name(value="a"), op=Add(), right=Name(value="b")), op=Sub(), right=Name(value="c"))),
-//         \\Expr(value=BinOp(left=BinOp(left=Name(value="a"), op=Mult(), right=Name(value="b")), op=Mult(), right=Name(value="c"))),
-//         \\Expr(value=BinOp(left=BinOp(left=Name(value="a"), op=Mult(), right=Name(value="b")), op=Div(), right=Name(value="c"))),
-//         \\Expr(value=BinOp(left=Name(value="a"), op=Add(), right=BinOp(left=Name(value="b"), op=Div(), right=Name(value="c")))),
-//         \\Expr(value=BinOp(left=BinOp(left=BinOp(left=Name(value="a"), op=Add(), right=BinOp(left=Name(value="b"), op=Mult(), right=Name(value="c"))), op=Add(), right=BinOp(left=Name(value="d"), op=Div(), right=Name(value="e"))), op=Sub(), right=Name(value="f"))),
-//         \\  ]
-//         \\)
-//     ));
-//
-//     try checkStringified(module, snap(@src(),
-//         \\(a > 5)
-//         \\(b < 4)
-//         \\(c == 5)
-//         \\(c != 5)
-//         \\((-a) * b)
-//         \\((a + b) + c)
-//         \\((a + b) - c)
-//         \\((a * b) * c)
-//         \\((a * b) / c)
-//         \\(a + (b / c))
-//         \\(((a + (b * c)) + (d / e)) - f)
-//     ));
-// }
-//
-// test "can handle chained comparators" {
-//     const input: []const u8 =
-//         \\ 1 < 2 > 3
-//         \\5 > 4 == 3 < 4
-//         \\5 < 4 != 3 > 4
-//         \\3 + 4*5 == 3*1 + 4*5
-//     ;
-//
-//     var lexer = try Lexer.init(t.allocator, input);
-//     defer lexer.deinit();
-//     var parser = try Parser.init(t.allocator, &lexer);
-//     defer parser.deinit();
-//
-//     const module = try parser.parseProgram();
-//
-//     try checkParserOutput(module, snap(@src(),
-//         \\Module(
-//         \\  body=[
-//         \\Expr(value=Compare(left=Constant(value="1"),ops=[Lt(),Gt()], comparators=[Constant(value="2"),Constant(value="3")])),
-//         \\Expr(value=Compare(left=Constant(value="5"),ops=[Gt(),Eq(),Lt()], comparators=[Constant(value="4"),Constant(value="3"),Constant(value="4")])),
-//         \\Expr(value=Compare(left=Constant(value="5"),ops=[Lt(),NotEq(),Gt()], comparators=[Constant(value="4"),Constant(value="3"),Constant(value="4")])),
-//         \\Expr(value=Compare(left=BinOp(left=Constant(value="3"), op=Add(), right=BinOp(left=Constant(value="4"), op=Mult(), right=Constant(value="5"))),ops=[Eq()], comparators=[BinOp(left=BinOp(left=Constant(value="3"), op=Mult(), right=Constant(value="1")), op=Add(), right=BinOp(left=Constant(value="4"), op=Mult(), right=Constant(value="5")))])),
-//         \\  ]
-//         \\)
-//     ));
-//
-//     try checkStringified(module, snap(@src(),
-//         \\(1 < 2 > 3)
-//         \\(5 > 4 == 3 < 4)
-//         \\(5 < 4 != 3 > 4)
-//         \\((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))
-//     ));
-// }
-//
-// test "can handle grouped expressions" {
-//     const input: []const u8 =
-//         \\1 + (2 + 3) + 4
-//         \\(5 + 5) * 2
-//         \\2 / (5 + 5)
-//         \\-(5 + 5)
-//     ;
-//
-//     var lexer = try Lexer.init(t.allocator, input);
-//     defer lexer.deinit();
-//     var parser = try Parser.init(t.allocator, &lexer);
-//     defer parser.deinit();
-//
-//     const module = try parser.parseProgram();
-//
-//     try checkParserOutput(module, snap(@src(),
-//         \\Module(
-//         \\  body=[
-//         \\Expr(value=BinOp(left=BinOp(left=Constant(value="1"), op=Add(), right=BinOp(left=Constant(value="2"), op=Add(), right=Constant(value="3"))), op=Add(), right=Constant(value="4"))),
-//         \\Expr(value=BinOp(left=BinOp(left=Constant(value="5"), op=Add(), right=Constant(value="5")), op=Mult(), right=Constant(value="2"))),
-//         \\Expr(value=BinOp(left=Constant(value="2"), op=Div(), right=BinOp(left=Constant(value="5"), op=Add(), right=Constant(value="5")))),
-//         \\Expr(value=UnaryOp(op=USub(), operand=BinOp(left=Constant(value="5"), op=Add(), right=Constant(value="5")))),
-//         \\  ]
-//         \\)
-//     ));
-//
-//     try checkStringified(module, snap(@src(),
-//         \\((1 + (2 + 3)) + 4)
-//         \\((5 + 5) * 2)
-//         \\(2 / (5 + 5))
-//         \\(-(5 + 5))
-//     ));
-// }
-//
-//
+fn parseModule(input: []const u8) !ast.Module {
+    var lexer = try Lexer.init(t.allocator, input);
+    defer lexer.deinit();
+    var parser = try Parser.init(t.allocator, &lexer);
+
+    const module = try parser.parseProgram();
+    return module;
+}
+
+test "can parse statements" {
+    const input =
+        \\x = 5
+        \\y = 10
+        \\foobar = 838383
+        \\
+    ;
+
+    const module = try parseModule(input);
+    defer module.deinit();
+
+    try checkParserOutput(module, snap(@src(),
+        \\Module(
+        \\  body=[
+        \\Assign(target=Name(value="x"), value=Constant(value="5")),
+        \\Assign(target=Name(value="y"), value=Constant(value="10")),
+        \\Assign(target=Name(value="foobar"), value=Constant(value="838383")),
+        \\  ]
+        \\)
+    ));
+}
+
+test "can parse name and constant expressions" {
+    const input =
+        \\foobar
+        \\True
+        \\False
+        \\None
+    ;
+
+    const module = try parseModule(input);
+    defer module.deinit();
+
+    try checkParserOutput(module, snap(@src(),
+        \\Module(
+        \\  body=[
+        \\Expr(value=Name(value="foobar")),
+        \\Expr(value=Constant(value="True")),
+        \\Expr(value=Constant(value="False")),
+        \\Expr(value=Constant(value="None")),
+        \\  ]
+        \\)
+    ));
+}
+
+test "can parse unary expressions" {
+    const input =
+        \\-5
+        \\~9
+    ;
+
+    const module = try parseModule(input);
+    defer module.deinit();
+
+    try checkParserOutput(module, snap(@src(),
+        \\Module(
+        \\  body=[
+        \\Expr(value=UnaryOp(op=USub(), operand=Constant(value="5"))),
+        \\Expr(value=UnaryOp(op=Invert(), operand=Constant(value="9"))),
+        \\  ]
+        \\)
+    ));
+
+    try checkStringified(module, snap(@src(),
+        \\(-5)
+        \\(~9)
+    ));
+}
+
+test "can parse infix expressions" {
+    const input =
+        \\5 + 5
+        \\5 - 5
+        \\5 * 5
+        \\5 / 5
+        \\5 // 5
+        \\5 % 5
+    ;
+
+    const module = try parseModule(input);
+    defer module.deinit();
+
+    try checkParserOutput(module, snap(@src(),
+        \\Module(
+        \\  body=[
+        \\Expr(value=BinOp(left=Constant(value="5"), op=Add(), right=Constant(value="5"))),
+        \\Expr(value=BinOp(left=Constant(value="5"), op=Sub(), right=Constant(value="5"))),
+        \\Expr(value=BinOp(left=Constant(value="5"), op=Mult(), right=Constant(value="5"))),
+        \\Expr(value=BinOp(left=Constant(value="5"), op=Div(), right=Constant(value="5"))),
+        \\Expr(value=BinOp(left=Constant(value="5"), op=FloorDiv(), right=Constant(value="5"))),
+        \\Expr(value=BinOp(left=Constant(value="5"), op=Mod(), right=Constant(value="5"))),
+        \\  ]
+        \\)
+    ));
+
+    try checkStringified(module, snap(@src(),
+        \\(5 + 5)
+        \\(5 - 5)
+        \\(5 * 5)
+        \\(5 / 5)
+        \\(5 // 5)
+        \\(5 % 5)
+    ));
+}
+
+test "can handle infix precedence" {
+    const input =
+        \\a > 5
+        \\b < 4
+        \\c == 5
+        \\c != 5
+        \\-a * b
+        \\a+b+c
+        \\a+b-c
+        \\a*b*c
+        \\a*b/c
+        \\a+b/c
+        \\a+b*c+d/e-f
+    ;
+
+    const module = try parseModule(input);
+    defer module.deinit();
+
+    try checkParserOutput(module, snap(@src(),
+        \\Module(
+        \\  body=[
+        \\Expr(value=Compare(left=Name(value="a"),ops=[Gt()], comparators=[Constant(value="5")])),
+        \\Expr(value=Compare(left=Name(value="b"),ops=[Lt()], comparators=[Constant(value="4")])),
+        \\Expr(value=Compare(left=Name(value="c"),ops=[Eq()], comparators=[Constant(value="5")])),
+        \\Expr(value=Compare(left=Name(value="c"),ops=[NotEq()], comparators=[Constant(value="5")])),
+        \\Expr(value=BinOp(left=UnaryOp(op=USub(), operand=Name(value="a")), op=Mult(), right=Name(value="b"))),
+        \\Expr(value=BinOp(left=BinOp(left=Name(value="a"), op=Add(), right=Name(value="b")), op=Add(), right=Name(value="c"))),
+        \\Expr(value=BinOp(left=BinOp(left=Name(value="a"), op=Add(), right=Name(value="b")), op=Sub(), right=Name(value="c"))),
+        \\Expr(value=BinOp(left=BinOp(left=Name(value="a"), op=Mult(), right=Name(value="b")), op=Mult(), right=Name(value="c"))),
+        \\Expr(value=BinOp(left=BinOp(left=Name(value="a"), op=Mult(), right=Name(value="b")), op=Div(), right=Name(value="c"))),
+        \\Expr(value=BinOp(left=Name(value="a"), op=Add(), right=BinOp(left=Name(value="b"), op=Div(), right=Name(value="c")))),
+        \\Expr(value=BinOp(left=BinOp(left=BinOp(left=Name(value="a"), op=Add(), right=BinOp(left=Name(value="b"), op=Mult(), right=Name(value="c"))), op=Add(), right=BinOp(left=Name(value="d"), op=Div(), right=Name(value="e"))), op=Sub(), right=Name(value="f"))),
+        \\  ]
+        \\)
+    ));
+
+    try checkStringified(module, snap(@src(),
+        \\(a > 5)
+        \\(b < 4)
+        \\(c == 5)
+        \\(c != 5)
+        \\((-a) * b)
+        \\((a + b) + c)
+        \\((a + b) - c)
+        \\((a * b) * c)
+        \\((a * b) / c)
+        \\(a + (b / c))
+        \\(((a + (b * c)) + (d / e)) - f)
+    ));
+}
+
+test "can handle chained comparators" {
+    const input: []const u8 =
+        \\ 1 < 2 > 3
+        \\5 > 4 == 3 < 4
+        \\5 < 4 != 3 > 4
+        \\3 + 4*5 == 3*1 + 4*5
+    ;
+
+    const module = try parseModule(input);
+    defer module.deinit();
+
+    try checkParserOutput(module, snap(@src(),
+        \\Module(
+        \\  body=[
+        \\Expr(value=Compare(left=Constant(value="1"),ops=[Lt(),Gt()], comparators=[Constant(value="2"),Constant(value="3")])),
+        \\Expr(value=Compare(left=Constant(value="5"),ops=[Gt(),Eq(),Lt()], comparators=[Constant(value="4"),Constant(value="3"),Constant(value="4")])),
+        \\Expr(value=Compare(left=Constant(value="5"),ops=[Lt(),NotEq(),Gt()], comparators=[Constant(value="4"),Constant(value="3"),Constant(value="4")])),
+        \\Expr(value=Compare(left=BinOp(left=Constant(value="3"), op=Add(), right=BinOp(left=Constant(value="4"), op=Mult(), right=Constant(value="5"))),ops=[Eq()], comparators=[BinOp(left=BinOp(left=Constant(value="3"), op=Mult(), right=Constant(value="1")), op=Add(), right=BinOp(left=Constant(value="4"), op=Mult(), right=Constant(value="5")))])),
+        \\  ]
+        \\)
+    ));
+
+    try checkStringified(module, snap(@src(),
+        \\(1 < 2 > 3)
+        \\(5 > 4 == 3 < 4)
+        \\(5 < 4 != 3 > 4)
+        \\((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))
+    ));
+}
+
+test "can handle grouped expressions" {
+    const input: []const u8 =
+        \\1 + (2 + 3) + 4
+        \\(5 + 5) * 2
+        \\2 / (5 + 5)
+        \\-(5 + 5)
+    ;
+
+    const module = try parseModule(input);
+    defer module.deinit();
+
+    try checkParserOutput(module, snap(@src(),
+        \\Module(
+        \\  body=[
+        \\Expr(value=BinOp(left=BinOp(left=Constant(value="1"), op=Add(), right=BinOp(left=Constant(value="2"), op=Add(), right=Constant(value="3"))), op=Add(), right=Constant(value="4"))),
+        \\Expr(value=BinOp(left=BinOp(left=Constant(value="5"), op=Add(), right=Constant(value="5")), op=Mult(), right=Constant(value="2"))),
+        \\Expr(value=BinOp(left=Constant(value="2"), op=Div(), right=BinOp(left=Constant(value="5"), op=Add(), right=Constant(value="5")))),
+        \\Expr(value=UnaryOp(op=USub(), operand=BinOp(left=Constant(value="5"), op=Add(), right=Constant(value="5")))),
+        \\  ]
+        \\)
+    ));
+
+    try checkStringified(module, snap(@src(),
+        \\((1 + (2 + 3)) + 4)
+        \\((5 + 5) * 2)
+        \\(2 / (5 + 5))
+        \\(-(5 + 5))
+    ));
+}
 
 test "can handle if statements" {
     const input: []const u8 =
@@ -596,12 +583,8 @@ test "can handle if statements" {
         \\  baz = 123
     ;
 
-    var lexer = try Lexer.init(t.allocator, input);
-    defer lexer.deinit();
-    var parser = try Parser.init(t.allocator, &lexer);
-    defer parser.deinit();
-
-    const module = try parser.parseProgram();
+    const module = try parseModule(input);
+    defer module.deinit();
 
     try checkParserOutput(module, snap(@src(),
         \\Module(

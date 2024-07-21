@@ -4,13 +4,17 @@ const Token = t.Token;
 
 pub const Module = struct {
     body: std.ArrayList(Stmt),
-    arena: *std.heap.ArenaAllocator,
+    arena: std.heap.ArenaAllocator,
 
     pub fn init(arena: *std.heap.ArenaAllocator) Module {
         return .{
             .body = std.ArrayList(Stmt).init(arena.allocator()),
-            .arena = arena,
+            .arena = arena.*,
         };
+    }
+
+    pub fn deinit(self: *const Module) void {
+        self.arena.deinit();
     }
 
     pub fn format(self: Module, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
