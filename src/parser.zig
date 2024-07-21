@@ -589,8 +589,50 @@ test "can handle if statements" {
     try checkParserOutput(module, snap(@src(),
         \\Module(
         \\  body=[
-        \\If(test=Constant(value="True"), body=[Expr(value=Constant(value="False"))orelse=[]),
-        \\If(test=Compare(left=Name(value="a"),ops=[Gt()], comparators=[Constant(value="5")]), body=[Assign(target=Name(value="foo"), value=Constant(value="234")),Assign(target=Name(value="baz"), value=Constant(value="123"))orelse=[]),
+        \\If(test=Constant(value="True"), body=[Expr(value=Constant(value="False"))], orelse=[]),
+        \\If(test=Compare(left=Name(value="a"),ops=[Gt()], comparators=[Constant(value="5")]), body=[Assign(target=Name(value="foo"), value=Constant(value="234")),Assign(target=Name(value="baz"), value=Constant(value="123"))], orelse=[]),
+        \\  ]
+        \\)
+    ));
+}
+
+test "can handle if-else statements" {
+    const input: []const u8 =
+        \\if True:
+        \\  False
+        \\else:
+        \\  True
+    ;
+
+    const module = try parseModule(input);
+    defer module.deinit();
+
+    try checkParserOutput(module, snap(@src(),
+        \\Module(
+        \\  body=[
+        \\If(test=Constant(value="True"), body=[Expr(value=Constant(value="False"))], orelse=[Expr(value=Constant(value="True"))]),
+        \\  ]
+        \\)
+    ));
+}
+
+test "can handle if-elif-else statements" {
+    const input: []const u8 =
+        \\if True:
+        \\  1
+        \\elif False:
+        \\  2
+        \\else:
+        \\  3
+    ;
+
+    const module = try parseModule(input);
+    defer module.deinit();
+
+    try checkParserOutput(module, snap(@src(),
+        \\Module(
+        \\  body=[
+        \\If(test=Constant(value="True"), body=[Expr(value=Constant(value="1"))], orelse=[If(test=Constant(value="False"), body=[Expr(value=Constant(value="2"))], orelse=[Expr(value=Constant(value="3"))])]),
         \\  ]
         \\)
     ));

@@ -106,7 +106,7 @@ pub const IfStmt = struct {
             try writer.print("{s}", .{stmt});
         }
 
-        try writer.print("orelse=[", .{});
+        try writer.print("], orelse=[", .{});
 
         for (self.or_else.items, 0..) |stmt, idx| {
             if (idx != 0) {
