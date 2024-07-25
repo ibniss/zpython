@@ -182,7 +182,14 @@ pub const Lexer = struct {
 
                 break :bang .{ .type = .EXCLAMATION, .literal = chSlice };
             },
-            '*' => .{ .type = .STAR, .literal = chSlice },
+            '*' => star: {
+                if (self.peekChar() == '*') {
+                    self.readChar();
+                    break :star .{ .type = .DOUBLESTAR, .literal = self.input[self.position - 1 .. self.read_position] };
+                }
+
+                break :star .{ .type = .STAR, .literal = chSlice };
+            },
             '/' => slash: {
                 if (self.peekChar() == '/') {
                     self.readChar();

@@ -19,6 +19,7 @@ pub const TokenType = enum {
     TILDE,
     DOUBLESLASH,
     PERCENT,
+    DOUBLESTAR,
 
     // Comparison
     LESS,

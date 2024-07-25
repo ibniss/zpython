@@ -40,11 +40,31 @@ fn parseGroupedExpression(_: *const TokenInfo, parser: *Parser, _: Token) ast.Ex
     const exp = parser.parseExpression(0);
 
     // after parsing we should be on RPAR
-    parser.expect(TokenType.RPAR);
+    _ = parser.expect(TokenType.RPAR);
 
     // TODO: generators?
 
     return exp.?.*;
+}
+
+fn parseIfExpression(ti: *const TokenInfo, parser: *Parser, left: *ast.Expr, _: Token) ast.Expr {
+    const cond = parser.parseExpression(ti.lbp).?;
+
+    // after parsing we should be on "else"
+    _ = parser.expect("else");
+
+    const or_else = parser.parseExpression(ti.lbp - 1).?;
+
+    // Important: create new pointer rather than reuse the same one as passed
+    // deallocation is handled by the arena
+    const newLeft = parser.arena.allocator().create(ast.Expr) catch unreachable;
+    newLeft.* = left.*;
+
+    return .{ .if_exp = .{
+        .test_exp = cond,
+        .body = newLeft,
+        .or_else = or_else,
+    } };
 }
 
 fn parseUnaryOp(ti: *const TokenInfo, parser: *Parser, token: Token) ast.Expr {
@@ -85,13 +105,11 @@ fn parseBinaryOp(ti: *const TokenInfo, parser: *Parser, left: *ast.Expr, token: 
         switch (left.*) {
             // if the left expr is also a comparison, instead append
             .compare => |*left_compare| {
-                std.debug.print("Left if compare {s}\n", .{left_compare});
                 left_compare.ops.append(cop) catch unreachable;
                 left_compare.comparators.append(right) catch unreachable;
                 return left.*;
             },
             else => {
-                std.debug.print("left is not compare {s}\n", .{left});
                 var comparators = std.ArrayList(*const ast.Expr).init(parser.arena.allocator());
                 comparators.append(right) catch unreachable;
 
@@ -130,6 +148,11 @@ pub const token_infos = std.StaticStringMap(TokenInfo).initComptime(.{
     .{ @tagName(TokenType.COMMA), .{
         .lbp = 5,
         .nbp = 0,
+    } },
+    .{ "if", .{
+        .lbp = 20,
+        .nbp = 0,
+        .infix = parseIfExpression,
     } },
     .{ @tagName(TokenType.LESS), .{
         .lbp = 60,

@@ -9,6 +9,8 @@ const _p = @import("./parselets.zig");
 const token_infos = _p.token_infos;
 const TokenInfo = _p.TokenInfo;
 
+const BP_UNTIL_COMMA = 6;
+
 pub const Parser = struct {
     arena: std.heap.ArenaAllocator,
     lexer: *Lexer,
@@ -16,7 +18,6 @@ pub const Parser = struct {
 
     pub fn init(allocator: std.mem.Allocator, lexer: *Lexer) !Parser {
         const curr = try lexer.nextToken();
-        std.debug.print("hello! token: {any}\n", .{curr});
 
         const parser: Parser = .{
             // used for AST allocations
@@ -32,7 +33,7 @@ pub const Parser = struct {
         self.arena.deinit();
     }
 
-    pub fn raiseError(self: *Parser, expected: TokenType, received: TokenType) void {
+    pub fn raiseError(self: *Parser, expected: anytype, received: TokenType) void {
         _ = self;
         std.debug.panic("expected token to be {any}, got {any} instead\n", .{ expected, received });
     }
@@ -40,7 +41,6 @@ pub const Parser = struct {
     pub fn nextToken(self: *Parser) void {
         // TODO: skip over comments/NL?
         self.cur_token = (self.lexer.nextToken() catch unreachable).?;
-        std.debug.print("token: {s}\n", .{self.cur_token});
     }
 
     /// Can be called with []const u8 or TokenType (must be used explicitly)
@@ -57,27 +57,28 @@ pub const Parser = struct {
         }
 
         @compileLog(.{T});
-        @compileLog(.{@typeInfo(T)});
-        @compileLog(.{@typeInfo(@typeInfo(T).Pointer.child)});
         @compileError("Unsupported type, see received type in log above");
     }
 
     /// Can be called with []const u8 or TokenType (must be used explicitly)
-    fn match(self: *Parser, typ: anytype) bool {
+    fn match(self: *Parser, typ: anytype) ?Token {
         const res = self.check(typ);
+        const tok = self.cur_token;
         if (res and !(@TypeOf(typ) == TokenType and typ == .ENDMARKER)) {
             self.nextToken();
         }
-        return res;
+        return if (res) tok else null;
     }
 
     /// Can be called with []const u8 or TokenType (must be used explicitly)
-    pub fn expect(self: *Parser, typ: anytype) void {
+    pub fn expect(self: *Parser, typ: anytype) Token {
         const res = self.match(typ);
 
-        if (!res) {
+        if (res == null) {
             self.raiseError(typ, self.cur_token.type);
         }
+
+        return res.?;
     }
 
     //     fn parseReturn(self: *Parser) ast.Return {
@@ -179,11 +180,10 @@ pub const Parser = struct {
 
         // Otherwise it's some assignment etc starting with expression
         const maybeName = self.parseExpression(0);
-        std.debug.print("returned expr {?}\n", .{maybeName});
 
         const name = maybeName orelse return null;
 
-        if (self.match(TokenType.EQUAL)) {
+        if (self.match(TokenType.EQUAL)) |_| {
             const value = self.parseExpression(0);
             return .{ .assign = .{ .value = value.?, .target = name } };
         }
@@ -193,25 +193,18 @@ pub const Parser = struct {
     }
 
     fn handleIf(self: *Parser) ast.Stmt {
-        std.debug.print("IN if, curren: {s}\n", .{self.cur_token});
         const expression = self.parseExpression(0) orelse std.debug.panic("Expected expression, found {}\n", .{self.cur_token});
-        std.debug.print("after expr in if, expr: {s}, tok: {s}\n", .{ expression, self.cur_token });
-        self.expect(TokenType.COLON);
-        std.debug.print("expected colon, cur: {s}\n", .{self.cur_token});
+        _ = self.expect(TokenType.COLON);
+
         // parse indented block
         const body = self.parseBlock();
-        if (true) {
-            // std.debug.print("Expr: {any}\n", .{expression});
-            // std.debug.print("Body {any}\n", .{body.items[0]});
-            // @panic("umm");
-        }
 
         var or_else = std.ArrayList(ast.Stmt).init(self.arena.allocator());
 
-        if (self.match("elif")) {
+        if (self.match("elif")) |_| {
             or_else.append(self.handleIf()) catch unreachable;
-        } else if (self.match("else")) {
-            self.expect(TokenType.COLON);
+        } else if (self.match("else")) |_| {
+            _ = self.expect(TokenType.COLON);
             var else_block = self.parseBlock();
             const else_block_slice = else_block.toOwnedSlice() catch unreachable;
             or_else.appendSlice(else_block_slice) catch unreachable;
@@ -227,11 +220,126 @@ pub const Parser = struct {
     }
 
     fn parseIfStmt(self: *Parser) ?ast.Stmt {
-        if (self.match("if")) {
+        if (self.match("if")) |_| {
             return self.handleIf();
         }
 
         return null;
+    }
+
+    fn parseArgs(self: *Parser) ast.Arguments {
+        // TODO
+        // var posonlyargs = std.ArrayList(ast.Arg).init(self.arena.allocator());
+        var args = std.ArrayList(ast.Arg).init(self.arena.allocator());
+        var kwonlyargs = std.ArrayList(ast.Arg).init(self.arena.allocator());
+        var kw_defaults = std.ArrayList(?ast.Constant).init(self.arena.allocator());
+        var defaults = std.ArrayList(ast.Constant).init(self.arena.allocator());
+
+        var kw_only = false;
+
+        var vararg: ?ast.Arg = null;
+        var match_vararg = false;
+
+        var kwarg: ?ast.Arg = null;
+        var match_kwarg = false;
+
+        // until end of args - colon for lambda, rpar for standard function
+        while (!self.check(TokenType.RPAR) and !self.check(TokenType.COLON)) {
+            if (self.match(TokenType.STAR)) |_| {
+                // after the star the rest of the args are kw only
+                kw_only = true;
+
+                if (self.match(TokenType.COMMA)) |_| {
+                    continue;
+                }
+
+                if (match_vararg) {
+                    std.debug.panic("Found more than one vararg", .{});
+                }
+
+                match_vararg = true;
+            } else if (self.match(TokenType.DOUBLESTAR)) |_| {
+                if (match_kwarg) {
+                    std.debug.panic("Found more than one kwarg", .{});
+                }
+
+                match_kwarg = true;
+            }
+
+            const arg = ast.Arg{ .arg = self.expect(TokenType.NAME).literal };
+
+            // TODO: match annotation here
+
+            if (match_vararg) {
+                vararg = arg;
+                _ = self.match(TokenType.COMMA);
+                continue;
+            } else if (match_kwarg) {
+                kwarg = arg;
+                _ = self.match(TokenType.COMMA);
+                continue;
+            }
+
+            if (kw_only) {
+                kwonlyargs.append(arg) catch unreachable;
+            } else {
+                args.append(arg) catch unreachable;
+            }
+
+            // default
+            if (self.match(TokenType.EQUAL)) |_| {
+                const default = self.parseExpression(BP_UNTIL_COMMA).?;
+
+                switch (default.*) {
+                    .constant => |cst| {
+                        if (kw_only) {
+                            kw_defaults.append(cst) catch unreachable;
+                        } else {
+                            defaults.append(cst) catch unreachable;
+                        }
+                    },
+                    else => unreachable,
+                }
+            } else if (kw_only) {
+                kw_defaults.append(null) catch unreachable;
+            }
+
+            _ = self.match(TokenType.COMMA);
+        }
+
+        return .{
+            // .posonlyargs = posonlyargs,
+            .args = args,
+            .kwonlyargs = kwonlyargs,
+            .kw_defaults = kw_defaults,
+            .defaults = defaults,
+            .vararg = vararg,
+            .kwarg = kwarg,
+        };
+    }
+
+    fn parseFunctionDef(self: *Parser) ?ast.Stmt {
+        if (self.match("def") == null) {
+            return null;
+        }
+        // TODO: async
+        // TODO: decorators
+
+        const func_name = self.expect(TokenType.NAME);
+        _ = self.expect(TokenType.LPAR);
+        const arg_spec = self.parseArgs();
+        _ = self.expect(TokenType.RPAR);
+        // TODO: support type annotation
+        // const returns = if (self.match("->")) self.parseExpression(0) else null;
+        _ = self.expect(TokenType.COLON);
+
+        const body = self.parseBlock();
+
+        return .{ .func_def = .{
+            .name = func_name.literal,
+            .args = arg_spec,
+            .body = body,
+        } };
     }
 
     ///compound_stmt:
@@ -244,6 +352,10 @@ pub const Parser = struct {
     /// | while_stmt
     /// | match_stmt
     fn parseCompoundStatement(self: *Parser) ?ast.Stmt {
+        if (self.parseFunctionDef()) |func_def| {
+            return func_def;
+        }
+
         if (self.parseIfStmt()) |if_stmt| {
             return if_stmt;
         }
@@ -252,16 +364,13 @@ pub const Parser = struct {
     }
 
     fn parseBlock(self: *Parser) std.ArrayList(ast.Stmt) {
-        std.debug.print("in parse block, token: {s}\n", .{self.cur_token});
         var statements = std.ArrayList(ast.Stmt).init(self.arena.allocator());
 
-        if (self.match(TokenType.NEWLINE)) {
-            std.debug.print("Match newline\n", .{});
-            self.expect(TokenType.INDENT);
+        if (self.match(TokenType.NEWLINE)) |_| {
+            _ = self.expect(TokenType.INDENT);
 
-            while (!self.match(TokenType.DEDENT)) {
+            while (self.match(TokenType.DEDENT) == null) {
                 const stmt = self.parseStatement();
-                // std.debug.print("got stmt {any}\n", .{stmt});
                 statements.insertSlice(statements.items.len, stmt.?.items) catch unreachable;
             }
 
@@ -288,7 +397,7 @@ pub const Parser = struct {
         // handle followup semi-separated statements
         while (true) {
             // no semicolon, just breakout
-            if (!self.match(TokenType.SEMI)) {
+            if (self.match(TokenType.SEMI) == null) {
                 break;
             }
 
@@ -311,13 +420,11 @@ pub const Parser = struct {
     /// Caller is responsible for freeing the module memory
     pub fn parseProgram(self: *Parser) !ast.Module {
         var module = ast.Module.init(&self.arena);
-        std.debug.print("arena {any}\n", .{self.arena});
 
         while (!self.check(TokenType.ENDMARKER)) {
             var statements = self.parseStatement();
             if (statements) |*stmts| {
                 const stmts_slice = try stmts.toOwnedSlice();
-                std.debug.print("got stmts {any}\n", .{stmts_slice});
                 try module.body.appendSlice(stmts_slice);
             }
         }
@@ -335,9 +442,9 @@ const snap = Snap.snap;
 
 // util to perform snapshot testing on a given input
 fn checkParserOutput(module: ast.Module, want: Snap) !void {
-    var buf: [2048]u8 = undefined;
-    const result = try std.fmt.bufPrint(&buf, "{s}", .{module});
-    try want.diff(result);
+    const out = try ast.dumpAlloc(module, t.allocator, 4);
+    defer t.allocator.free(out);
+    try want.diff(out);
 }
 
 fn checkStringified(module: ast.Module, want: Snap) !void {
@@ -371,11 +478,20 @@ test "can parse statements" {
 
     try checkParserOutput(module, snap(@src(),
         \\Module(
-        \\  body=[
-        \\Assign(target=Name(value="x"), value=Constant(value="5")),
-        \\Assign(target=Name(value="y"), value=Constant(value="10")),
-        \\Assign(target=Name(value="foobar"), value=Constant(value="838383")),
-        \\  ]
+        \\    body=[
+        \\        Assign(
+        \\            target=Name(value=x),
+        \\            value=Constant(value=5)
+        \\        ),
+        \\        Assign(
+        \\            target=Name(value=y),
+        \\            value=Constant(value=10)
+        \\        ),
+        \\        Assign(
+        \\            target=Name(value=foobar),
+        \\            value=Constant(value=838383)
+        \\        ),
+        \\    ]
         \\)
     ));
 }
@@ -393,12 +509,20 @@ test "can parse name and constant expressions" {
 
     try checkParserOutput(module, snap(@src(),
         \\Module(
-        \\  body=[
-        \\Expr(value=Name(value="foobar")),
-        \\Expr(value=Constant(value="True")),
-        \\Expr(value=Constant(value="False")),
-        \\Expr(value=Constant(value="None")),
-        \\  ]
+        \\    body=[
+        \\        Expr(
+        \\            value=Name(value=foobar)
+        \\        ),
+        \\        Expr(
+        \\            value=Constant(value=True)
+        \\        ),
+        \\        Expr(
+        \\            value=Constant(value=False)
+        \\        ),
+        \\        Expr(
+        \\            value=Constant(value=None)
+        \\        ),
+        \\    ]
         \\)
     ));
 }
@@ -414,10 +538,20 @@ test "can parse unary expressions" {
 
     try checkParserOutput(module, snap(@src(),
         \\Module(
-        \\  body=[
-        \\Expr(value=UnaryOp(op=USub(), operand=Constant(value="5"))),
-        \\Expr(value=UnaryOp(op=Invert(), operand=Constant(value="9"))),
-        \\  ]
+        \\    body=[
+        \\        Expr(
+        \\            value=UnaryOp(
+        \\                USub(),
+        \\                operand=Constant(value=5)
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=UnaryOp(
+        \\                Invert(),
+        \\                operand=Constant(value=9)
+        \\            )
+        \\        ),
+        \\    ]
         \\)
     ));
 
@@ -442,14 +576,50 @@ test "can parse infix expressions" {
 
     try checkParserOutput(module, snap(@src(),
         \\Module(
-        \\  body=[
-        \\Expr(value=BinOp(left=Constant(value="5"), op=Add(), right=Constant(value="5"))),
-        \\Expr(value=BinOp(left=Constant(value="5"), op=Sub(), right=Constant(value="5"))),
-        \\Expr(value=BinOp(left=Constant(value="5"), op=Mult(), right=Constant(value="5"))),
-        \\Expr(value=BinOp(left=Constant(value="5"), op=Div(), right=Constant(value="5"))),
-        \\Expr(value=BinOp(left=Constant(value="5"), op=FloorDiv(), right=Constant(value="5"))),
-        \\Expr(value=BinOp(left=Constant(value="5"), op=Mod(), right=Constant(value="5"))),
-        \\  ]
+        \\    body=[
+        \\        Expr(
+        \\            value=BinOp(
+        \\                left=Constant(value=5),
+        \\                op=Add(),
+        \\                right=Constant(value=5)
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=BinOp(
+        \\                left=Constant(value=5),
+        \\                op=Sub(),
+        \\                right=Constant(value=5)
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=BinOp(
+        \\                left=Constant(value=5),
+        \\                op=Mult(),
+        \\                right=Constant(value=5)
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=BinOp(
+        \\                left=Constant(value=5),
+        \\                op=Div(),
+        \\                right=Constant(value=5)
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=BinOp(
+        \\                left=Constant(value=5),
+        \\                op=FloorDiv(),
+        \\                right=Constant(value=5)
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=BinOp(
+        \\                left=Constant(value=5),
+        \\                op=Mod(),
+        \\                right=Constant(value=5)
+        \\            )
+        \\        ),
+        \\    ]
         \\)
     ));
 
@@ -483,19 +653,140 @@ test "can handle infix precedence" {
 
     try checkParserOutput(module, snap(@src(),
         \\Module(
-        \\  body=[
-        \\Expr(value=Compare(left=Name(value="a"),ops=[Gt()], comparators=[Constant(value="5")])),
-        \\Expr(value=Compare(left=Name(value="b"),ops=[Lt()], comparators=[Constant(value="4")])),
-        \\Expr(value=Compare(left=Name(value="c"),ops=[Eq()], comparators=[Constant(value="5")])),
-        \\Expr(value=Compare(left=Name(value="c"),ops=[NotEq()], comparators=[Constant(value="5")])),
-        \\Expr(value=BinOp(left=UnaryOp(op=USub(), operand=Name(value="a")), op=Mult(), right=Name(value="b"))),
-        \\Expr(value=BinOp(left=BinOp(left=Name(value="a"), op=Add(), right=Name(value="b")), op=Add(), right=Name(value="c"))),
-        \\Expr(value=BinOp(left=BinOp(left=Name(value="a"), op=Add(), right=Name(value="b")), op=Sub(), right=Name(value="c"))),
-        \\Expr(value=BinOp(left=BinOp(left=Name(value="a"), op=Mult(), right=Name(value="b")), op=Mult(), right=Name(value="c"))),
-        \\Expr(value=BinOp(left=BinOp(left=Name(value="a"), op=Mult(), right=Name(value="b")), op=Div(), right=Name(value="c"))),
-        \\Expr(value=BinOp(left=Name(value="a"), op=Add(), right=BinOp(left=Name(value="b"), op=Div(), right=Name(value="c")))),
-        \\Expr(value=BinOp(left=BinOp(left=BinOp(left=Name(value="a"), op=Add(), right=BinOp(left=Name(value="b"), op=Mult(), right=Name(value="c"))), op=Add(), right=BinOp(left=Name(value="d"), op=Div(), right=Name(value="e"))), op=Sub(), right=Name(value="f"))),
-        \\  ]
+        \\    body=[
+        \\        Expr(
+        \\            value=Compare(
+        \\                left=Name(value=a),
+        \\                ops=[
+        \\                    Gt()
+        \\                ],
+        \\                comparators=[
+        \\                    Constant(value=5)
+        \\                ]
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=Compare(
+        \\                left=Name(value=b),
+        \\                ops=[
+        \\                    Lt()
+        \\                ],
+        \\                comparators=[
+        \\                    Constant(value=4)
+        \\                ]
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=Compare(
+        \\                left=Name(value=c),
+        \\                ops=[
+        \\                    Eq()
+        \\                ],
+        \\                comparators=[
+        \\                    Constant(value=5)
+        \\                ]
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=Compare(
+        \\                left=Name(value=c),
+        \\                ops=[
+        \\                    NotEq()
+        \\                ],
+        \\                comparators=[
+        \\                    Constant(value=5)
+        \\                ]
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=BinOp(
+        \\                left=UnaryOp(
+        \\                    USub(),
+        \\                    operand=Name(value=a)
+        \\                ),
+        \\                op=Mult(),
+        \\                right=Name(value=b)
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=BinOp(
+        \\                left=BinOp(
+        \\                    left=Name(value=a),
+        \\                    op=Add(),
+        \\                    right=Name(value=b)
+        \\                ),
+        \\                op=Add(),
+        \\                right=Name(value=c)
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=BinOp(
+        \\                left=BinOp(
+        \\                    left=Name(value=a),
+        \\                    op=Add(),
+        \\                    right=Name(value=b)
+        \\                ),
+        \\                op=Sub(),
+        \\                right=Name(value=c)
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=BinOp(
+        \\                left=BinOp(
+        \\                    left=Name(value=a),
+        \\                    op=Mult(),
+        \\                    right=Name(value=b)
+        \\                ),
+        \\                op=Mult(),
+        \\                right=Name(value=c)
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=BinOp(
+        \\                left=BinOp(
+        \\                    left=Name(value=a),
+        \\                    op=Mult(),
+        \\                    right=Name(value=b)
+        \\                ),
+        \\                op=Div(),
+        \\                right=Name(value=c)
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=BinOp(
+        \\                left=Name(value=a),
+        \\                op=Add(),
+        \\                right=BinOp(
+        \\                    left=Name(value=b),
+        \\                    op=Div(),
+        \\                    right=Name(value=c)
+        \\                )
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=BinOp(
+        \\                left=BinOp(
+        \\                    left=BinOp(
+        \\                        left=Name(value=a),
+        \\                        op=Add(),
+        \\                        right=BinOp(
+        \\                            left=Name(value=b),
+        \\                            op=Mult(),
+        \\                            right=Name(value=c)
+        \\                        )
+        \\                    ),
+        \\                    op=Add(),
+        \\                    right=BinOp(
+        \\                        left=Name(value=d),
+        \\                        op=Div(),
+        \\                        right=Name(value=e)
+        \\                    )
+        \\                ),
+        \\                op=Sub(),
+        \\                right=Name(value=f)
+        \\            )
+        \\        ),
+        \\    ]
         \\)
     ));
 
@@ -527,12 +818,82 @@ test "can handle chained comparators" {
 
     try checkParserOutput(module, snap(@src(),
         \\Module(
-        \\  body=[
-        \\Expr(value=Compare(left=Constant(value="1"),ops=[Lt(),Gt()], comparators=[Constant(value="2"),Constant(value="3")])),
-        \\Expr(value=Compare(left=Constant(value="5"),ops=[Gt(),Eq(),Lt()], comparators=[Constant(value="4"),Constant(value="3"),Constant(value="4")])),
-        \\Expr(value=Compare(left=Constant(value="5"),ops=[Lt(),NotEq(),Gt()], comparators=[Constant(value="4"),Constant(value="3"),Constant(value="4")])),
-        \\Expr(value=Compare(left=BinOp(left=Constant(value="3"), op=Add(), right=BinOp(left=Constant(value="4"), op=Mult(), right=Constant(value="5"))),ops=[Eq()], comparators=[BinOp(left=BinOp(left=Constant(value="3"), op=Mult(), right=Constant(value="1")), op=Add(), right=BinOp(left=Constant(value="4"), op=Mult(), right=Constant(value="5")))])),
-        \\  ]
+        \\    body=[
+        \\        Expr(
+        \\            value=Compare(
+        \\                left=Constant(value=1),
+        \\                ops=[
+        \\                    Lt(),
+        \\                    Gt()
+        \\                ],
+        \\                comparators=[
+        \\                    Constant(value=2),
+        \\                    Constant(value=3)
+        \\                ]
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=Compare(
+        \\                left=Constant(value=5),
+        \\                ops=[
+        \\                    Gt(),
+        \\                    Eq(),
+        \\                    Lt()
+        \\                ],
+        \\                comparators=[
+        \\                    Constant(value=4),
+        \\                    Constant(value=3),
+        \\                    Constant(value=4)
+        \\                ]
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=Compare(
+        \\                left=Constant(value=5),
+        \\                ops=[
+        \\                    Lt(),
+        \\                    NotEq(),
+        \\                    Gt()
+        \\                ],
+        \\                comparators=[
+        \\                    Constant(value=4),
+        \\                    Constant(value=3),
+        \\                    Constant(value=4)
+        \\                ]
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=Compare(
+        \\                left=BinOp(
+        \\                    left=Constant(value=3),
+        \\                    op=Add(),
+        \\                    right=BinOp(
+        \\                        left=Constant(value=4),
+        \\                        op=Mult(),
+        \\                        right=Constant(value=5)
+        \\                    )
+        \\                ),
+        \\                ops=[
+        \\                    Eq()
+        \\                ],
+        \\                comparators=[
+        \\                    BinOp(
+        \\                        left=BinOp(
+        \\                            left=Constant(value=3),
+        \\                            op=Mult(),
+        \\                            right=Constant(value=1)
+        \\                        ),
+        \\                        op=Add(),
+        \\                        right=BinOp(
+        \\                            left=Constant(value=4),
+        \\                            op=Mult(),
+        \\                            right=Constant(value=5)
+        \\                        )
+        \\                    )
+        \\                ]
+        \\            )
+        \\        ),
+        \\    ]
         \\)
     ));
 
@@ -557,12 +918,55 @@ test "can handle grouped expressions" {
 
     try checkParserOutput(module, snap(@src(),
         \\Module(
-        \\  body=[
-        \\Expr(value=BinOp(left=BinOp(left=Constant(value="1"), op=Add(), right=BinOp(left=Constant(value="2"), op=Add(), right=Constant(value="3"))), op=Add(), right=Constant(value="4"))),
-        \\Expr(value=BinOp(left=BinOp(left=Constant(value="5"), op=Add(), right=Constant(value="5")), op=Mult(), right=Constant(value="2"))),
-        \\Expr(value=BinOp(left=Constant(value="2"), op=Div(), right=BinOp(left=Constant(value="5"), op=Add(), right=Constant(value="5")))),
-        \\Expr(value=UnaryOp(op=USub(), operand=BinOp(left=Constant(value="5"), op=Add(), right=Constant(value="5")))),
-        \\  ]
+        \\    body=[
+        \\        Expr(
+        \\            value=BinOp(
+        \\                left=BinOp(
+        \\                    left=Constant(value=1),
+        \\                    op=Add(),
+        \\                    right=BinOp(
+        \\                        left=Constant(value=2),
+        \\                        op=Add(),
+        \\                        right=Constant(value=3)
+        \\                    )
+        \\                ),
+        \\                op=Add(),
+        \\                right=Constant(value=4)
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=BinOp(
+        \\                left=BinOp(
+        \\                    left=Constant(value=5),
+        \\                    op=Add(),
+        \\                    right=Constant(value=5)
+        \\                ),
+        \\                op=Mult(),
+        \\                right=Constant(value=2)
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=BinOp(
+        \\                left=Constant(value=2),
+        \\                op=Div(),
+        \\                right=BinOp(
+        \\                    left=Constant(value=5),
+        \\                    op=Add(),
+        \\                    right=Constant(value=5)
+        \\                )
+        \\            )
+        \\        ),
+        \\        Expr(
+        \\            value=UnaryOp(
+        \\                USub(),
+        \\                operand=BinOp(
+        \\                    left=Constant(value=5),
+        \\                    op=Add(),
+        \\                    right=Constant(value=5)
+        \\                )
+        \\            )
+        \\        ),
+        \\    ]
         \\)
     ));
 
@@ -588,14 +992,46 @@ test "can handle if statements" {
 
     try checkParserOutput(module, snap(@src(),
         \\Module(
-        \\  body=[
-        \\If(test=Constant(value="True"), body=[Expr(value=Constant(value="False"))], orelse=[]),
-        \\If(test=Compare(left=Name(value="a"),ops=[Gt()], comparators=[Constant(value="5")]), body=[Assign(target=Name(value="foo"), value=Constant(value="234")),Assign(target=Name(value="baz"), value=Constant(value="123"))], orelse=[]),
-        \\  ]
+        \\    body=[
+        \\        If(
+        \\            test=Constant(value=True),
+        \\            body=[
+        \\                Expr(
+        \\                    value=Constant(value=False)
+        \\                )
+        \\            ],
+        \\            orelse=[
+        \\            
+        \\            ]
+        \\        ),
+        \\        If(
+        \\            test=Compare(
+        \\                left=Name(value=a),
+        \\                ops=[
+        \\                    Gt()
+        \\                ],
+        \\                comparators=[
+        \\                    Constant(value=5)
+        \\                ]
+        \\            ),
+        \\            body=[
+        \\                Assign(
+        \\                    target=Name(value=foo),
+        \\                    value=Constant(value=234)
+        \\                ),
+        \\                Assign(
+        \\                    target=Name(value=baz),
+        \\                    value=Constant(value=123)
+        \\                )
+        \\            ],
+        \\            orelse=[
+        \\            
+        \\            ]
+        \\        ),
+        \\    ]
         \\)
     ));
 }
-
 test "can handle if-else statements" {
     const input: []const u8 =
         \\if True:
@@ -609,9 +1045,21 @@ test "can handle if-else statements" {
 
     try checkParserOutput(module, snap(@src(),
         \\Module(
-        \\  body=[
-        \\If(test=Constant(value="True"), body=[Expr(value=Constant(value="False"))], orelse=[Expr(value=Constant(value="True"))]),
-        \\  ]
+        \\    body=[
+        \\        If(
+        \\            test=Constant(value=True),
+        \\            body=[
+        \\                Expr(
+        \\                    value=Constant(value=False)
+        \\                )
+        \\            ],
+        \\            orelse=[
+        \\                Expr(
+        \\                    value=Constant(value=True)
+        \\                )
+        \\            ]
+        \\        ),
+        \\    ]
         \\)
     ));
 }
@@ -631,9 +1079,96 @@ test "can handle if-elif-else statements" {
 
     try checkParserOutput(module, snap(@src(),
         \\Module(
-        \\  body=[
-        \\If(test=Constant(value="True"), body=[Expr(value=Constant(value="1"))], orelse=[If(test=Constant(value="False"), body=[Expr(value=Constant(value="2"))], orelse=[Expr(value=Constant(value="3"))])]),
-        \\  ]
+        \\    body=[
+        \\        If(
+        \\            test=Constant(value=True),
+        \\            body=[
+        \\                Expr(
+        \\                    value=Constant(value=1)
+        \\                )
+        \\            ],
+        \\            orelse=[
+        \\                If(
+        \\                    test=Constant(value=False),
+        \\                    body=[
+        \\                        Expr(
+        \\                            value=Constant(value=2)
+        \\                        )
+        \\                    ],
+        \\                    orelse=[
+        \\                        Expr(
+        \\                            value=Constant(value=3)
+        \\                        )
+        \\                    ]
+        \\                )
+        \\            ]
+        \\        ),
+        \\    ]
+        \\)
+    ));
+}
+
+test "can handle if expressions" {
+    const input: []const u8 =
+        \\x = 5 if True else 4
+    ;
+
+    const module = try parseModule(input);
+    defer module.deinit();
+
+    try checkParserOutput(module, snap(@src(),
+        \\Module(
+        \\    body=[
+        \\        Assign(
+        \\            target=Name(value=x),
+        \\            value=IfExp(
+        \\                test=Constant(value=True),
+        \\                body=Constant(value=5),
+        \\                orelse=Constant(value=4)
+        \\            )
+        \\        ),
+        \\    ]
+        \\)
+    ));
+}
+
+test "can handle function definitions" {
+    const input: []const u8 =
+        \\def my_function():
+        \\  return True
+    ;
+
+    const module = try parseModule(input);
+    defer module.deinit();
+
+    try checkParserOutput(module, snap(@src(),
+        \\Module(
+        \\    body=[
+        \\        FunctionDef(
+        \\            name=my_function,
+        \\            args=arguments(
+        \\                args=[
+        \\                ],
+        \\                vararg=None,
+        \\                kwonlyargs=[
+        \\                ],
+        \\                kw_defaults=[
+        \\                ],
+        \\                kwarg=None,
+        \\                defaults=[
+        \\                ],
+        \\            ]
+        \\        ),
+        \\        body=[
+        \\            Expr(
+        \\                value=Name(value=return)
+        \\            ),
+        \\            Expr(
+        \\                value=Constant(value=True)
+        \\            )
+        \\        ]
+        \\    ),
+        \\]
         \\)
     ));
 }
