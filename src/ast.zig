@@ -167,6 +167,7 @@ pub const Expr = union(enum) {
     binary: BinaryOp,
     compare: Compare,
     if_exp: IfExp,
+    call: Call,
 
     const Self = @This();
 
@@ -271,6 +272,7 @@ pub const Arguments = struct {
         _ = try writer.write("args=[\n");
         writer.indent();
         try dumpList(self.args, writer);
+        _ = try writer.write("\n");
         writer.dedent();
         _ = try writer.write("],\n");
         _ = try writer.write("vararg=");
@@ -665,6 +667,54 @@ pub const UnaryOperator = union(enum) {
         _ = switch (self) {
             inline else => |to| writer.write(to.token.literal) catch unreachable,
         };
+    }
+};
+
+pub const Keyword = struct {
+    /// identifier is NULL for **kwargs
+    identifier: ?[]const u8,
+    value: *const Expr,
+
+    const Self = @This();
+
+    pub fn dump(self: Self, writer: *IndentWriter) !void {
+        if (self.identifier) |ident| {
+            _ = try writer.write(ident);
+            _ = try writer.write("=");
+        }
+        try self.value.dump(writer);
+    }
+};
+
+pub const Call = struct {
+    func: *const Expr,
+    args: std.ArrayList(*const Expr),
+    keywords: std.ArrayList(Keyword),
+
+    const Self = @This();
+
+    pub fn dump(self: Self, writer: *IndentWriter) !void {
+        _ = try writer.write("Call(\n");
+        writer.indent();
+        _ = try writer.write("func=");
+        try self.func.dump(writer);
+        _ = try writer.write(",\n");
+        _ = try writer.write("args=[\n");
+        try dumpList(self.args, writer);
+        _ = try writer.write("],\n");
+        _ = try writer.write("keywords=[\n");
+        try dumpList(self.keywords, writer);
+        _ = try writer.write("],\n");
+        try self.func.dump(writer);
+        writer.dedent();
+        _ = try writer.write("\n)");
+    }
+
+    pub fn stringify(self: Self, writer: anytype) void {
+        self.func.stringify(writer);
+        _ = writer.write("(") catch unreachable;
+        // TODO: ...
+        _ = writer.write(")") catch unreachable;
     }
 };
 

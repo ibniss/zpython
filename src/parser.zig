@@ -175,13 +175,18 @@ pub const Parser = struct {
         return leftExpr;
     }
 
+    // small stmt
     fn parseSimpleStatement(self: *Parser) ?ast.Stmt {
         // TODO: check statements like assert, global...
+        if (self.match("return")) |ret| {
+            const expr = self.parseExpression(0);
+            return .{ .ret = .{ .value = expr, .token = ret } };
+        }
 
         // Otherwise it's some assignment etc starting with expression
-        const maybeName = self.parseExpression(0);
+        const maybe_name = self.parseExpression(0);
 
-        const name = maybeName orelse return null;
+        const name = maybe_name orelse return null;
 
         if (self.match(TokenType.EQUAL)) |_| {
             const value = self.parseExpression(0);
@@ -225,6 +230,66 @@ pub const Parser = struct {
         }
 
         return null;
+    }
+
+    // TODO: debug loop
+    fn parseCallArgs(self: *Parser) struct {
+        args: std.ArrayList(*const ast.Expr),
+        kwargs: std.ArrayList(ast.Keyword),
+    } {
+        const args = std.ArrayList(ast.Expr).init(self.arena.allocator());
+        var kwargs = std.ArrayList(ast.Keyword).init(self.arena.allocator());
+
+        // if there are any arguments
+        if (!self.check(TokenType.RPAR)) {
+            while (true) {
+                var starred: ?[]const u8 = null;
+
+                // handle *args/**kwargs
+                if (self.match("*")) |_| {
+                    starred = "*";
+                } else if (self.match("**")) |_| {
+                    starred = "**";
+                }
+
+                // match until comma
+                const arg = self.parseExpression(BP_UNTIL_COMMA);
+
+                // TODO: handle GenComp
+
+                if (self.match(TokenType.EQUAL)) |_| {
+                    // arg must be ast.Name
+                    switch (arg.?) {
+                        .Name => |name| {
+                            const val = self.parseExpression(BP_UNTIL_COMMA);
+                            kwargs.append(ast.Keyword{ .value = val, .identifier = name.value }) catch unreachable;
+                        },
+                        else => std.debug.panic("call expression matched must be ast.Name if followed by '='"),
+                    }
+                } else {
+                    if (std.mem.eql(u8, starred, "**")) {
+                        kwargs.append(ast.Keyword{ .value = arg.?, .identifier = null }) catch unreachable;
+                    } else {
+                        // TODO
+                        // if (std.mem.eql(u8, starred, "*")) {
+                        //     arg = ast.Starred(...)
+                        // }
+                        args.append(arg.?);
+                    }
+                }
+
+                // skip over commas
+                _ = self.match(TokenType.COMMA);
+
+                if (self.check(TokenType.RPAR)) |_| {
+                    break;
+                }
+            }
+        }
+
+        _ = self.expect(TokenType.RPAR);
+
+        return .{ .args = args, .kwargs = kwargs };
     }
 
     fn parseArgs(self: *Parser) ast.Arguments {
@@ -1001,7 +1066,7 @@ test "can handle if statements" {
         \\                )
         \\            ],
         \\            orelse=[
-        \\            
+        \\
         \\            ]
         \\        ),
         \\        If(
@@ -1025,7 +1090,7 @@ test "can handle if statements" {
         \\                )
         \\            ],
         \\            orelse=[
-        \\            
+        \\
         \\            ]
         \\        ),
         \\    ]
@@ -1148,6 +1213,7 @@ test "can handle function definitions" {
         \\            name=my_function,
         \\            args=arguments(
         \\                args=[
+        \\
         \\                ],
         \\                vararg=None,
         \\                kwonlyargs=[
@@ -1160,15 +1226,65 @@ test "can handle function definitions" {
         \\            ]
         \\        ),
         \\        body=[
-        \\            Expr(
-        \\                value=Name(value=return)
-        \\            ),
-        \\            Expr(
-        \\                value=Constant(value=True)
-        \\            )
+        \\            Return(value=Constant(value=True))
         \\        ]
         \\    ),
         \\]
         \\)
+    ));
+}
+
+test "can handle function arguments" {
+    const input: []const u8 =
+        \\def my_function(x, y):
+        \\  return x + y
+    ;
+
+    const module = try parseModule(input);
+    defer module.deinit();
+
+    try checkParserOutput(module, snap(@src(),
+        \\Module(
+        \\    body=[
+        \\        FunctionDef(
+        \\            name=my_function,
+        \\            args=arguments(
+        \\                args=[
+        \\                    arg(arg="x"),
+        \\                    arg(arg="y")
+        \\                ],
+        \\                vararg=None,
+        \\                kwonlyargs=[
+        \\                ],
+        \\                kw_defaults=[
+        \\                ],
+        \\                kwarg=None,
+        \\                defaults=[
+        \\                ],
+        \\            ]
+        \\        ),
+        \\        body=[
+        \\            Return(value=BinOp(
+        \\                left=Name(value=x),
+        \\                op=Add(),
+        \\                right=Name(value=y)
+        \\            ))
+        \\        ]
+        \\    ),
+        \\]
+        \\)
+    ));
+}
+
+test "can handle call expression" {
+    const input: []const u8 =
+        \\my_func(x, y)
+    ;
+
+    const module = try parseModule(input);
+    defer module.deinit();
+
+    try checkParserOutput(module, snap(@src(),
+        \\
     ));
 }
